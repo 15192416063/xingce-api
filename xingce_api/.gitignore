@@ -1,0 +1,27 @@
+# 密钥/配置 —— 绝不提交
+.env
+*.env
+
+# 数据库
+*.db
+*.sqlite
+
+# 运行数据(PDF原件、抠出的图、向量库)—— 含真题,勿提交
+data/
+vector_db/
+graphic_crops/
+material_out/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 日志/临时
+_srv.log
+*.log
+
+# 穿透工具二进制
+cloudflared.exe
+*.exe

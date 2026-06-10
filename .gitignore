@@ -1,0 +1,40 @@
+# 防止敏感信息和无用文件进入代码仓库
+
+# ⚠️ 最重要：API key 绝不能提交
+.env
+*.key
+
+# 数据库（含用户账号/密码哈希,绝不提交）
+*.db
+*.sqlite
+*.sqlite3
+xingce_db/
+chroma_db/
+xingce_api/vector_db/
+
+# 运行数据：抠出的图、上传的PDF
+xingce_api/data/
+
+# ⚠️ 版权内容：真题 PDF 切勿提交到公开仓库
+行测-真题/
+*.pdf
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+novel-env/
+rag-env/
+
+# 上传的临时文件
+*.tmp
+_tmp_*.png
+
+# 系统/编辑器
+.DS_Store
+.idea/
+.vscode/
+*.swp

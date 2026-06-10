@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import fitz; print\\('PyMuPDF', fitz.__doc__[:40]\\)\")",
+      "Bash(python -c \"import cv2; print\\('opencv', cv2.__version__\\)\")",
+      "Bash(python _analyze_pdf.py \"行测-真题/2024年国家公务员录用考试《行测》题（地市级）.pdf\")",
+      "Bash(PYTHONIOENCODING=utf-8 python _analyze_pdf.py \"行测-真题/2024年国家公务员录用考试《行测》题（地市级）.pdf\")",
+      "Bash(PYTHONIOENCODING=utf-8 python _analyze_layout.py \"行测-真题/2024年国家公务员录用考试《行测》题（地市级）.pdf\")",
+      "Bash(PYTHONIOENCODING=utf-8 python _crop_test.py \"行测-真题/2024年国家公务员录用考试《行测》题（地市级）.pdf\")",
+      "Bash(PYTHONIOENCODING=utf-8 python _probe_all.py)",
+      "Bash(grep -v \"^$\")",
+      "Bash(PYTHONIOENCODING=utf-8 python extract_graphics.py \"行测-真题/2015年国家公务员考试《行测》真题卷（副省级\\).pdf\" \"_t2015\")",
+      "Bash(PYTHONIOENCODING=utf-8 python -c ' *)",
+      "Bash(PYTHONIOENCODING=utf-8 python extract_graphics.py \"行测-真题/2025年3月22日山东事业单位统考试《职测+综应》真题.pdf\" \"_sd\")",
+      "Bash(PYTHONIOENCODING=utf-8 python extract_graphics.py \"行测-真题/2025年江苏事业单位专技岗计算机真题.pdf\" \"_js\")",
+      "Bash(PYTHONIOENCODING=utf-8 python -i -c ' *)",
+      "Bash(sed -i 's/_is_real_figure\\(r, pw\\)/_is_real_figure\\(r, pw, ph\\)/g' extract_graphics.py)",
+      "Bash(PYTHONIOENCODING=utf-8 python extract_graphics.py \"行测-真题/2024年国家公务员录用考试《行测》题（地市级）.pdf\" \"_g24\")",
+      "Bash(python -c ' *)",
+      "Bash(pip install *)",
+      "Bash(PYTHONIOENCODING=utf-8 python -c \"import fastapi; print\\('fastapi', fastapi.__version__\\)\")",
+      "Bash(pkill -f \"uvicorn main:app\")",
+      "Bash(rm -rf _mat)",
+      "Bash(PYTHONIOENCODING=utf-8 python extract_material.py \"行测-真题/2025年国家公务员录用考试《行测》题（行政执法卷）.pdf\" \"_mat\")",
+      "Bash(rm -rf _mat2)",
+      "Bash(PYTHONIOENCODING=utf-8 python extract_material.py \"行测-真题/2025年国家公务员录用考试《行测》题（行政执法卷）.pdf\" \"_mat2\")",
+      "PowerShell(Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | Where-Object { $_.CommandLine -match 'uvicorn|main:app|xingce' } | ForEach-Object { Write-Output \"kill $\\($_.ProcessId\\): $\\($_.CommandLine\\)\"; Stop-Process -Id $_.ProcessId -Force }; Write-Output \"done\")",
+      "Bash(rm -f xingce.db)",
+      "Bash(mv test.db xingce.db)",
+      "Bash(PYTHONIOENCODING=utf-8 python -c \"import sqlite3;c=sqlite3.connect\\('xingce.db'\\);print\\('库内题数:',c.execute\\('select count\\(*\\) from question'\\).fetchone\\(\\)[0],'| 资料分析:',c.execute\\('select count\\(*\\) from question where material_id>0'\\).fetchone\\(\\)[0]\\)\")",
+      "Bash(cp test.db xingce_demo.db)",
+      "Bash(PYTHONIOENCODING=utf-8 python -c \"import sqlite3;c=sqlite3.connect\\('xingce_demo.db'\\);print\\('题数',c.execute\\('select count\\(*\\) from question'\\).fetchone\\(\\)[0],'资料分析',c.execute\\('select count\\(*\\) from question where material_id>0'\\).fetchone\\(\\)[0]\\)\")",
+      "Bash(curl -s http://127.0.0.1:8090/api/stats)",
+      "Bash(rm -f _srv.log)"
+    ]
+  }
+}
