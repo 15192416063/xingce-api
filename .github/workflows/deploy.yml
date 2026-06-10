@@ -1,0 +1,28 @@
+# 全自动部署:每次 push 到 main,自动 SSH 登服务器执行 deploy.sh
+# 启用前提:在 GitHub 仓库 Settings -> Secrets and variables -> Actions 添加 3 个密钥:
+#   SERVER_HOST     服务器公网IP
+#   SERVER_USER     登录用户名(如 root)
+#   SERVER_SSH_KEY  服务器的 SSH 私钥(整段内容)
+# 还需:服务器上能免密 sudo 重启服务(visudo 加一行: 用户名 ALL=(ALL) NOPASSWD: /bin/systemctl restart xingce)
+name: Deploy to server
+# 现在设为"手动触发",避免没配服务器时每次 push 都失败报错。
+# 服务器和上面3个密钥配好后,把下面 4 行换成:
+#   on:
+#     push:
+#       branches: [ main ]
+# 就变成"推送即自动部署"。
+on:
+  workflow_dispatch:
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH and run deploy.sh
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            cd ~/xingce-api/xingce_api
+            bash deploy.sh
