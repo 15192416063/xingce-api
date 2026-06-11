@@ -3,15 +3,15 @@
 启动: uvicorn main:app   (在 xingce_api 目录下)
 """
 import os
+import re
 import uuid
-import shutil
 import random
 from datetime import date, datetime, timedelta
 
 from fastapi import (FastAPI, UploadFile, File, BackgroundTasks, HTTPException,
-                     Form, Depends, Body)
+                     Form, Depends, Body, Request)
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import Response
+from fastapi.responses import Response, JSONResponse
 
 from sqlalchemy import func
 
@@ -23,21 +23,111 @@ import auth
 import ai
 import pdfgen
 import stats as opstats
+import security
 from db import (init_db, SessionLocal, IngestionJob, Question, QuestionImage,
                 PracticeRecord, WrongBook, MaterialGroup, Favorite, User, News,
-                AiUsage, StatDaily, VisitDay)
+                AiUsage, StatDaily, VisitDay, LoginLog, Setting, AuditLog)
 
-app = FastAPI(title="行测智能题库 API", version="2.0")
+# ---- 错误日志:轮转文件,排障不靠猜(稳定性) ----
+import logging
+import traceback
+from logging.handlers import RotatingFileHandler
+
+os.makedirs(os.path.join(config.BASE_DIR, "logs"), exist_ok=True)
+_logger = logging.getLogger("xc")
+_logger.setLevel(logging.INFO)
+_h = RotatingFileHandler(os.path.join(config.BASE_DIR, "logs", "app.log"),
+                         maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8")
+_h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+_logger.addHandler(_h)
+
+app = FastAPI(title="行测智能题库 API", version="2.2",
+              docs_url=None, redoc_url=None, openapi_url=None)  # 生产关掉接口文档
 init_db()
+security.start_backup_thread()
+
+# ---- 可在管理面板热改的配置(白名单;改其它键一律拒绝) ----
+RUNTIME_SETTINGS = {
+    "DEEPSEEK_API_KEY": ("DEEPSEEK_API_KEY", True),   # (config属性名, 是否敏感)
+    "XC_EMBED_KEY": ("EMBED_KEY", True),
+    "XC_EMBED_BASE_URL": ("EMBED_BASE_URL", False),
+    "XC_EMBED_MODEL": ("EMBED_MODEL", False),
+    "XC_EXAM_NAME": ("EXAM_NAME", False),
+    "XC_EXAM_DATE": ("EXAM_DATE", False),
+}
+
+
+def _apply_setting(skey: str, sval: str):
+    attr, _ = RUNTIME_SETTINGS[skey]
+    setattr(config, attr, sval)
+    if skey == "DEEPSEEK_API_KEY":
+        ai._llm.cache_clear()        # 换 key 后重建 LLM 客户端
+
+
+def _startup_recover():
+    """启动自愈:1) 数据库里的配置覆盖生效;2) 上次解析到一半的任务标失败(一致性)。"""
+    db = SessionLocal()
+    for s in db.query(Setting).all():
+        if s.skey in RUNTIME_SETTINGS and s.sval:
+            try:
+                _apply_setting(s.skey, s.sval)
+            except Exception:
+                pass
+    stuck = db.query(IngestionJob).filter(IngestionJob.status.in_([0, 1, 2])) \
+        .update({IngestionJob.status: 4,
+                 IngestionJob.error_msg: "服务重启中断,请重新上传"},
+                synchronize_session=False)
+    db.commit()
+    db.close()
+    if stuck:
+        _logger.info("启动自愈:清理中断任务 %s 个", stuck)
+
+
+_startup_recover()
+
+
+def _audit(user_id: int, action: str, detail: str = ""):
+    """管理员操作留痕(防篡改:有据可查)"""
+    try:
+        db = SessionLocal()
+        db.add(AuditLog(user_id=user_id, action=action, detail=detail[:512]))
+        db.commit()
+        db.close()
+    except Exception:
+        pass
+
+
+@app.exception_handler(Exception)
+async def _unhandled(request: Request, exc: Exception):
+    """兜底:任何未捕获异常记日志、给用户友好提示,绝不泄露堆栈。"""
+    _logger.error("500 %s %s\n%s", request.url.path, exc, traceback.format_exc())
+    return JSONResponse({"detail": "服务器开小差了,请稍后重试"}, status_code=500)
 
 
 @app.middleware("http")
-async def _no_cache_html(request, call_next):
-    """前端 HTML 不缓存,避免改版后浏览器还跑旧页面"""
-    resp = await call_next(request)
+async def _security_mw(request, call_next):
+    """限流(防刷/防爆破) + 安全响应头 + HTML 不缓存,一个中间件全做了。"""
     p = request.url.path
+    if p.startswith("/api/"):
+        ip = security.client_ip(request)
+        # 三层限流:认证类最严(防爆破),AI类次之(防烧钱),全局兜底(防洪水)
+        if p.startswith("/api/auth/") and not security.allow(
+                f"a:{ip}", config.RL_AUTH_PER_MIN):
+            return JSONResponse({"detail": "操作太频繁,请稍后再试"}, status_code=429)
+        if (p.startswith("/api/ai/") or p == "/api/mine/add") and not security.allow(
+                f"i:{ip}", config.RL_AI_PER_MIN):
+            return JSONResponse({"detail": "AI 请求太频繁,歇一会儿~"}, status_code=429)
+        if not security.allow(f"g:{ip}", config.RL_GLOBAL_PER_MIN):
+            return JSONResponse({"detail": "请求过于频繁"}, status_code=429)
+    resp = await call_next(request)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"           # 防点击劫持
+    resp.headers["Referrer-Policy"] = "no-referrer"
     if p == "/" or p.endswith(".html"):
         resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        resp.headers["Content-Security-Policy"] = (
+            "default-src 'self'; img-src 'self' data:; "
+            "style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'")
     return resp
 
 
@@ -119,40 +209,73 @@ def _rank_of(done: int):
 
 
 # ============ 认证 ============
+def _log_login(username, ip, ok):
+    try:
+        db = SessionLocal()
+        db.add(LoginLog(username=username[:64], ip=ip[:64], ok=1 if ok else 0))
+        db.commit()
+        db.close()
+    except Exception:
+        pass
+
+
 @app.post("/api/auth/register")
-def register(username: str = Form(...), password: str = Form(...),
+def register(request: Request, username: str = Form(...), password: str = Form(...),
              admin_code: str = Form("")):
     username = username.strip()
-    if len(username) < 3 or len(password) < 6:
-        raise HTTPException(400, "用户名≥3位、密码≥6位")
+    # 用户名:3-20位,仅限中文/字母/数字/下划线(防注入垃圾字符与超长DoS)
+    if not re.fullmatch(r"[\w一-龥]{3,20}", username):
+        raise HTTPException(400, "用户名3~20位,仅限中文、字母、数字、下划线")
+    # 密码上限72位:PBKDF2 对超长输入是 CPU 炸弹
+    if not (6 <= len(password) <= 72):
+        raise HTTPException(400, "密码长度6~72位")
     db = SessionLocal()
     if db.query(User).filter(User.username == username).first():
         db.close()
         raise HTTPException(409, "用户名已被注册")
     is_first = db.query(User).count() == 0       # 首位注册者=管理员
-    role = 1 if (is_first or admin_code == config.ADMIN_SIGNUP_CODE) else 0
+    # 邀请码提权:仅在管理员明确配置了 XC_ADMIN_CODE 时才生效(默认关闭)
+    code_ok = bool(config.ADMIN_SIGNUP_CODE) and admin_code == config.ADMIN_SIGNUP_CODE
+    role = 1 if (is_first or code_ok) else 0
     u = User(username=username, password_hash=auth.hash_password(password), role=role)
     db.add(u)
     db.commit()
-    token = auth.make_token(u.id, u.role)
+    token = auth.make_token(u.id, u.role, u.token_ver or 0)
     vo = _user_vo(u)
     db.close()
+    _log_login(username, security.client_ip(request), True)
     return {"token": token, "user": vo}
 
 
 @app.post("/api/auth/login")
-def login(username: str = Form(...), password: str = Form(...)):
+def login(request: Request, username: str = Form(...), password: str = Form(...)):
+    username = username.strip()[:64]
+    ip = security.client_ip(request)
+    key = f"{username}|{ip}"
+    left = security.login_locked(key)
+    if left:
+        raise HTTPException(429, f"失败次数过多,已锁定,{left // 60 + 1} 分钟后再试")
+    if len(password) > 72:
+        raise HTTPException(400, "密码长度异常")
     db = SessionLocal()
-    u = db.query(User).filter(User.username == username.strip()).first()
+    u = db.query(User).filter(User.username == username).first()
     if not u or not auth.verify_password(password, u.password_hash):
         db.close()
+        security.login_fail(key)
+        _log_login(username, ip, False)
         raise HTTPException(401, "用户名或密码错误")
     if u.status != 1:
         db.close()
         raise HTTPException(403, "账号已被封禁")
-    token = auth.make_token(u.id, u.role)
+    security.login_ok(key)
+    # 单设备登录:版本+1,其它设备的旧令牌全部立即失效
+    if config.SINGLE_DEVICE:
+        u.token_ver = (u.token_ver or 0) + 1
+        db.commit()
+    token = auth.make_token(u.id, u.role, u.token_ver or 0)
     vo = _user_vo(u)
     db.close()
+    _log_login(username, ip, True)
     return {"token": token, "user": vo}
 
 
@@ -161,21 +284,71 @@ def me(u: User = Depends(auth.current_user)):
     return _user_vo(u)
 
 
+@app.post("/api/auth/change-password")
+def change_password(old_password: str = Form(...), new_password: str = Form(...),
+                    u: User = Depends(auth.current_user)):
+    """改密码:校验旧密码,改完所有设备(含本机旧令牌)强制重新登录。"""
+    if not (6 <= len(new_password) <= 72):
+        raise HTTPException(400, "新密码长度6~72位")
+    db = SessionLocal()
+    user = db.get(User, u.id)
+    if not auth.verify_password(old_password, user.password_hash):
+        db.close()
+        raise HTTPException(401, "当前密码错误")
+    user.password_hash = auth.hash_password(new_password)
+    user.token_ver = (user.token_ver or 0) + 1   # 吊销全部旧令牌
+    db.commit()
+    token = auth.make_token(user.id, user.role, user.token_ver)
+    db.close()
+    return {"ok": True, "token": token}
+
+
+@app.post("/api/auth/logout-all")
+def logout_all(u: User = Depends(auth.current_user)):
+    """强制下线所有设备(怀疑令牌泄露时用)。"""
+    db = SessionLocal()
+    user = db.get(User, u.id)
+    user.token_ver = (user.token_ver or 0) + 1
+    db.commit()
+    db.close()
+    return {"ok": True}
+
+
 # ============ 入库(管理员) ============
+async def _save_pdf(file: UploadFile, save: str, max_mb: int):
+    """流式保存上传的 PDF:校验魔数(防改后缀的恶意文件) + 大小上限。"""
+    head = await file.read(5)
+    if head != b"%PDF-":
+        raise HTTPException(400, "不是有效的 PDF 文件")
+    size = len(head)
+    try:
+        with open(save, "wb") as f:
+            f.write(head)
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > max_mb * 1024 * 1024:
+                    raise HTTPException(413, f"文件超过 {max_mb}MB")
+                f.write(chunk)
+    except HTTPException:
+        if os.path.exists(save):
+            os.remove(save)
+        raise
+
+
 @app.post("/api/ingest/upload")
 async def upload(background: BackgroundTasks, file: UploadFile = File(...),
                  admin: User = Depends(auth.require_admin)):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "仅支持 PDF")
     save = os.path.join(config.PDF_DIR, f"{uuid.uuid4().hex}.pdf")
-    with open(save, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    await _save_pdf(file, save, config.ADMIN_PDF_MAX_MB)
     db = SessionLocal()
     job = IngestionJob(file_name=file.filename, file_path=save, scope="public", status=0)
     db.add(job)
     db.commit()
     jid = job.id
     db.close()
+    _audit(admin.id, "上传公共题库PDF", file.filename)
     background.add_task(ingest.run, jid)
     return {"job_id": jid}
 
@@ -218,6 +391,7 @@ def review_confirm(question_ids: list[int] = Body(...), approve: bool = True,
         n += 1
     db.commit()
     db.close()
+    _audit(admin.id, "审核题目" if approve else "删除题目", f"{n}道")
     return {"updated": n}
 
 
@@ -345,7 +519,7 @@ def _mine_first_recommend(db, c, msg, uid, k=6):
 def ai_ask(payload: dict = Body(...), u: User = Depends(auth.current_user)):
     """和 AI 对话 + 按你说的内容/贴的题,自动分析考点并推荐对应的题(动态,非固定)。
     推荐优先调用户自己上传的题(私有题库),不够再从公共库补。"""
-    msg = (payload.get("message") or "").strip()
+    msg = (payload.get("message") or "").strip()[:4000]
     if not msg:
         raise HTTPException(400, "请输入内容")
     _ai_guard(u)
@@ -372,7 +546,7 @@ def ai_ask(payload: dict = Body(...), u: User = Depends(auth.current_user)):
 @app.post("/api/mine/add")
 def mine_add(content: str = Form(...), u: User = Depends(auth.current_user)):
     """用户上传自己的一道题 → 存入个人私有题库 → 立即返回对应/相似的题。"""
-    content = content.strip()
+    content = content.strip()[:4000]
     if len(content) < 8:
         raise HTTPException(400, "题目内容太短")
     _ai_guard(u)
@@ -451,15 +625,7 @@ async def mine_upload_pdf(background: BackgroundTasks, file: UploadFile = File(.
     if today_jobs >= config.MINE_PDF_DAILY:
         raise HTTPException(429, f"今天已传 {config.MINE_PDF_DAILY} 份,明天再来吧(解析很烧算力)")
     save = os.path.join(config.PDF_DIR, f"u{u.id}_{uuid.uuid4().hex}.pdf")
-    size = 0
-    with open(save, "wb") as f:
-        while chunk := await file.read(1024 * 1024):
-            size += len(chunk)
-            if size > config.MINE_PDF_MAX_MB * 1024 * 1024:
-                f.close()
-                os.remove(save)
-                raise HTTPException(413, f"文件超过 {config.MINE_PDF_MAX_MB}MB")
-            f.write(chunk)
+    await _save_pdf(file, save, config.MINE_PDF_MAX_MB)
     db = SessionLocal()
     job = IngestionJob(user_id=u.id, file_name=file.filename, file_path=save,
                        scope=f"user:{u.id}", status=0)
@@ -640,6 +806,42 @@ def track_visit(u: User = Depends(auth.optional_user)):
     return {"ok": True}
 
 
+@app.get("/api/admin/settings")
+def get_settings(admin: User = Depends(auth.require_admin)):
+    """当前运行配置(敏感值只露尾4位)。来源:管理面板改过的存库,否则用 .env。"""
+    out = []
+    for skey, (attr, secret) in RUNTIME_SETTINGS.items():
+        val = getattr(config, attr, "") or ""
+        shown = (("****" + val[-4:]) if len(val) > 4 else ("已设置" if val else "")) \
+            if secret else val
+        out.append({"key": skey, "value": shown, "set": bool(val), "secret": secret})
+    return {"items": out}
+
+
+@app.post("/api/admin/settings")
+def save_setting(skey: str = Form(...), sval: str = Form(...),
+                 admin: User = Depends(auth.require_admin)):
+    """改配置(白名单内):立即生效 + 存库(重启不丢) + 审计留痕。"""
+    skey = skey.strip()
+    sval = sval.strip()
+    if skey not in RUNTIME_SETTINGS:
+        raise HTTPException(400, "不允许修改该配置项")
+    if len(sval) > 500:
+        raise HTTPException(400, "值过长")
+    db = SessionLocal()
+    row = db.query(Setting).filter(Setting.skey == skey).first()
+    if row:
+        row.sval = sval
+        row.updated_at = datetime.now()
+    else:
+        db.add(Setting(skey=skey, sval=sval))
+    db.commit()
+    db.close()
+    _apply_setting(skey, sval)
+    _audit(admin.id, "改配置", skey)     # 只记键名,不记密钥内容
+    return {"ok": True}
+
+
 @app.get("/api/admin/metrics")
 def admin_metrics(admin: User = Depends(auth.require_admin)):
     """运营面板(仅管理员):人数/人次/对话/token/成本/题库规模 + 近14天趋势。"""
@@ -662,6 +864,13 @@ def admin_metrics(admin: User = Depends(auth.require_admin)):
     trend = [{"day": r.day[5:], "pv": r.pv, "chat": r.chat_count,
               "tokens": r.tokens_in + r.tokens_out}
              for r in db.query(StatDaily).order_by(StatDaily.day.desc()).limit(14).all()][::-1]
+    # 安全监控:今日登录失败 + 失败最多的IP(发现爆破一眼就看到)
+    day0 = datetime.combine(date.today(), datetime.min.time())
+    fail_today = db.query(LoginLog).filter(LoginLog.ok == 0,
+                                           LoginLog.created_at >= day0).count()
+    bad_ips = db.query(LoginLog.ip, func.count(LoginLog.id)) \
+        .filter(LoginLog.ok == 0, LoginLog.created_at >= day0) \
+        .group_by(LoginLog.ip).order_by(func.count(LoginLog.id).desc()).limit(5).all()
     db.close()
 
     def _cost(tin, tout):
@@ -679,6 +888,10 @@ def admin_metrics(admin: User = Depends(auth.require_admin)):
                   "tokens_out": tot[3], "cost": _cost(tot[2], tot[3]),
                   "users": users, "practice": practice_total},
         "bank": {"public": q_pub, "mine": q_mine},
+        "security": {"login_fail_today": fail_today,
+                     "locked_now": security.locked_count(),
+                     "bad_ips": [{"ip": ip, "fails": n} for ip, n in bad_ips]},
+        "ops": security.integrity_status(),
         "trend": trend,
     }
 
@@ -707,6 +920,7 @@ def news_add(title: str = Form(...), summary: str = Form(""), content: str = For
     db.commit()
     nid = n.id
     db.close()
+    _audit(admin.id, "发布资讯", title)
     return {"id": nid}
 
 

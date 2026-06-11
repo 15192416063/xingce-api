@@ -43,8 +43,8 @@ def _unb64(s: str) -> bytes:
     return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
 
 
-def make_token(user_id: int, role: int) -> str:
-    payload = {"uid": user_id, "role": role,
+def make_token(user_id: int, role: int, ver: int = 0) -> str:
+    payload = {"uid": user_id, "role": role, "ver": ver,
                "exp": int(time.time()) + config.TOKEN_TTL_DAYS * 86400}
     body = _b64(json.dumps(payload, separators=(",", ":")).encode())
     sig = _b64(hmac.new(config.SECRET_KEY.encode(), body.encode(),
@@ -77,6 +77,9 @@ def _user_from_header(authorization: str):
     db = SessionLocal()
     u = db.get(User, payload["uid"])
     db.close()
+    # 令牌版本校验:登录/改密后版本+1,旧令牌(含被盗的)立即全部失效
+    if u and payload.get("ver", 0) != (u.token_ver or 0):
+        return None
     return u
 
 

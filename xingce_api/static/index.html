@@ -3,11 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>行测智能题库 · 上岸助手</title>
+<title>行测智能题库 · 公考上岸平台</title>
 <style>
-:root{--blue:#c96442;--blue-d:#a8492c;--bg:#f0eee6;--card:#fffdf8;--ink:#2b2a27;
- --muted:#86847c;--line:#e6e1d5;--ok:#5a7d4f;--bad:#bb5340;--gold:#bd8a3a;
- --serif:"Songti SC","Noto Serif SC",Georgia,"Times New Roman",serif;}
+/* 公考风:正红 + 鎏金 + 宣纸底,庄重大气 */
+:root{--blue:#b3231a;--blue-d:#8e1a12;--bg:#f7f4eb;--card:#fffdf6;--ink:#27221e;
+ --muted:#8a8273;--line:#e6decb;--ok:#3f7d4e;--bad:#c0392b;--gold:#b8860b;
+ --gold-l:#d4af37;
+ --serif:"Songti SC","Noto Serif SC","STSong","SimSun",Georgia,serif;}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
 body{margin:0;font-family:system-ui,-apple-system,"Microsoft YaHei",sans-serif;
@@ -15,9 +17,13 @@ body{margin:0;font-family:system-ui,-apple-system,"Microsoft YaHei",sans-serif;
 .serif{font-family:var(--serif)}
 a{color:inherit;text-decoration:none}
 
+/* 顶部红金国风条(全站) */
+.gov-strip{position:fixed;top:0;left:0;right:0;height:4px;z-index:60;
+ background:linear-gradient(90deg,#8e1a12,#b3231a 30%,#d4af37 50%,#b3231a 70%,#8e1a12)}
+
 /* ============ 落地页 ============ */
 .landing{position:relative;min-height:100vh;overflow-x:hidden}
-.lp-top{position:fixed;top:0;left:0;right:0;z-index:40;display:flex;align-items:center;
+.lp-top{position:fixed;top:4px;left:0;right:0;z-index:40;display:flex;align-items:center;
  justify-content:space-between;padding:14px 5vw;transition:.3s;
  backdrop-filter:blur(0px)}
 .lp-top.scrolled{background:rgba(255,253,248,.86);backdrop-filter:blur(14px);
@@ -30,7 +36,7 @@ a{color:inherit;text-decoration:none}
 .btn:hover{background:var(--blue-d);transform:translateY(-1px)}
 .btn:disabled{opacity:.5}
 .btn.ghost{background:transparent;color:var(--blue);border:1.5px solid var(--blue)}
-.btn.ghost:hover{background:rgba(201,100,66,.08)}
+.btn.ghost:hover{background:rgba(179,35,26,.08)}
 .btn.gray{background:#eceff5;color:#555}
 .btn.sm{padding:5px 11px;font-size:13px}
 .btn.ok{background:var(--ok)}.btn.bad{background:var(--bad)}
@@ -41,12 +47,24 @@ a{color:inherit;text-decoration:none}
 .hero-sec{position:relative;padding:140px 5vw 90px;text-align:center;overflow:hidden}
 .blob{position:absolute;border-radius:50%;filter:blur(70px);opacity:.45;pointer-events:none;
  animation:drift 16s ease-in-out infinite alternate}
-.blob.b1{width:480px;height:480px;background:#e8b59a;top:-140px;left:-100px}
-.blob.b2{width:380px;height:380px;background:#d9c79a;bottom:-120px;right:-80px;animation-delay:-8s}
-.blob.b3{width:300px;height:300px;background:#c9d4b4;top:30%;right:18%;animation-delay:-4s;opacity:.3}
+.blob.b1{width:480px;height:480px;background:#e3a9a0;top:-140px;left:-100px}
+.blob.b2{width:380px;height:380px;background:#e0cd94;bottom:-120px;right:-80px;animation-delay:-8s}
+.blob.b3{width:300px;height:300px;background:#d8c9a8;top:30%;right:18%;animation-delay:-4s;opacity:.3}
 @keyframes drift{from{transform:translate(0,0) scale(1)}to{transform:translate(50px,36px) scale(1.12)}}
-.hero-sec .kicker{display:inline-block;background:rgba(201,100,66,.1);color:var(--blue-d);
- border:1px solid rgba(201,100,66,.25);border-radius:30px;padding:6px 16px;font-size:13px;margin-bottom:22px}
+.hero-sec .kicker{display:inline-block;background:rgba(179,35,26,.08);color:var(--blue-d);
+ border:1px solid rgba(179,35,26,.3);border-radius:30px;padding:6px 18px;font-size:13px;margin-bottom:22px;
+ font-family:var(--serif);letter-spacing:.12em}
+.hero-sec .kicker .st{color:var(--gold-l)}
+/* 红印章「上岸」 */
+.stamp{position:absolute;right:9vw;top:170px;width:128px;height:128px;border-radius:50%;
+ border:4px solid rgba(179,35,26,.65);box-shadow:inset 0 0 0 3px rgba(179,35,26,.18);
+ display:flex;flex-direction:column;align-items:center;justify-content:center;
+ font-family:var(--serif);color:rgba(179,35,26,.78);transform:rotate(14deg);
+ pointer-events:none;user-select:none;opacity:0;animation:stampIn .5s .9s cubic-bezier(.2,1.6,.4,1) forwards}
+.stamp b{font-size:42px;font-weight:700;line-height:1.1;letter-spacing:.1em}
+.stamp i{font-style:normal;font-size:11px;letter-spacing:.3em;margin-top:2px}
+@keyframes stampIn{from{opacity:0;transform:rotate(14deg) scale(1.8)}to{opacity:1;transform:rotate(14deg) scale(1)}}
+@media(max-width:900px){.stamp{display:none}}
 .hero-sec h1{font-family:var(--serif);font-size:clamp(34px,5.4vw,58px);font-weight:700;
  line-height:1.25;margin:0 0 18px;letter-spacing:.01em}
 .hero-sec h1 em{font-style:normal;color:var(--blue);position:relative}
@@ -69,8 +87,8 @@ a{color:inherit;text-decoration:none}
 .feat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:20px}
 .feat{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:28px 24px;
  transition:.25s;position:relative;overflow:hidden}
-.feat:hover{transform:translateY(-5px);box-shadow:0 18px 44px rgba(80,60,40,.12);border-color:rgba(201,100,66,.4)}
-.feat .fi{width:46px;height:46px;border-radius:12px;background:rgba(201,100,66,.1);
+.feat:hover{transform:translateY(-5px);box-shadow:0 18px 44px rgba(80,60,40,.12);border-color:rgba(179,35,26,.4)}
+.feat .fi{width:46px;height:46px;border-radius:12px;background:rgba(179,35,26,.1);
  display:flex;align-items:center;justify-content:center;font-size:23px;margin-bottom:14px}
 .feat h3{margin:0 0 8px;font-size:16px;font-family:var(--serif)}
 .feat p{margin:0;color:#6b6960;font-size:13px;line-height:1.8}
@@ -78,16 +96,16 @@ a{color:inherit;text-decoration:none}
 .flow-sec{padding:30px 5vw 90px;max-width:980px;margin:0 auto}
 .flow{display:flex;gap:0;align-items:stretch;flex-wrap:wrap;justify-content:center}
 .fstep{flex:1;min-width:200px;text-align:center;padding:0 18px;position:relative}
-.fstep .num{width:54px;height:54px;border-radius:50%;background:linear-gradient(135deg,var(--blue),#d98a63);
+.fstep .num{width:54px;height:54px;border-radius:50%;background:linear-gradient(135deg,#8e1a12,#c0392b);
  color:#fff;font-size:22px;font-weight:800;display:flex;align-items:center;justify-content:center;
- margin:0 auto 16px;font-family:var(--serif);box-shadow:0 8px 20px rgba(201,100,66,.3)}
+ margin:0 auto 16px;font-family:var(--serif);box-shadow:0 8px 20px rgba(179,35,26,.3)}
 .fstep h4{margin:0 0 6px;font-size:15px;font-family:var(--serif)}
 .fstep p{color:#6b6960;font-size:13px;line-height:1.8;margin:0}
 .fstep:not(:last-child):after{content:"→";position:absolute;right:-12px;top:14px;font-size:22px;color:#cfc8b8}
 @media(max-width:760px){.fstep:not(:last-child):after{display:none}}
 /* 底部CTA */
 .cta-sec{margin:0 5vw 70px;border-radius:24px;padding:64px 8vw;text-align:center;
- background:linear-gradient(115deg,#c96442,#d98a63 60%,#bd8a3a);color:#fff;position:relative;overflow:hidden}
+ background:linear-gradient(115deg,#8e1a12,#b3231a 55%,#9a6d0b);color:#fff;position:relative;overflow:hidden}
 .cta-sec h2{font-family:var(--serif);font-size:clamp(24px,3.4vw,36px);margin:0 0 12px}
 .cta-sec p{opacity:.92;margin:0 0 30px;font-size:15px}
 .cta-sec .btn{background:#fff;color:var(--blue-d);font-weight:600}
@@ -106,7 +124,7 @@ a{color:inherit;text-decoration:none}
 .auth-box{position:relative}
 .auth-box p{margin:0 0 18px;color:var(--muted);font-size:13px}
 .auth-box input{width:100%;padding:12px;margin:7px 0;border:1px solid var(--line);border-radius:10px;font-size:15px;background:#fff;outline:none;transition:.15s}
-.auth-box input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(201,100,66,.12)}
+.auth-box input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(179,35,26,.12)}
 .auth-box .btn{width:100%;margin-top:12px;padding:13px}
 .auth-box .sw{text-align:center;margin-top:16px;color:var(--blue);cursor:pointer;font-size:13px}
 .auth-box .err{color:var(--bad);font-size:13px;min-height:18px;margin-top:6px}
@@ -118,8 +136,8 @@ a{color:inherit;text-decoration:none}
 .brand{font-family:var(--serif);font-size:19px;font-weight:600;color:var(--ink);padding:0 20px 14px}
 .brand small{display:block;font-size:11px;color:#86847c;font-weight:400;margin-top:4px;font-family:system-ui}
 .nav a{display:flex;align-items:center;gap:10px;padding:11px 20px;cursor:pointer;color:#5c5a52;border-left:3px solid transparent;font-size:14px}
-.nav a:hover{background:rgba(201,100,66,.08);color:var(--ink)}
-.nav a.on{background:rgba(201,100,66,.13);color:var(--blue-d);border-left-color:var(--blue);font-weight:600}
+.nav a:hover{background:rgba(179,35,26,.08);color:var(--ink)}
+.nav a.on{background:rgba(179,35,26,.13);color:var(--blue-d);border-left-color:var(--blue);font-weight:600}
 .ico{width:18px;text-align:center}
 .side-foot{margin-top:auto;padding:14px 20px;font-size:11px;color:#86847c}
 .side-foot .u{color:var(--ink);font-size:13px;margin-bottom:6px}
@@ -133,7 +151,7 @@ h2.page{margin:0 0 18px;font-size:22px;font-family:var(--serif);font-weight:600}
 .stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
 .stat .n{font-size:26px;font-weight:700}.stat .l{color:var(--muted);font-size:12px;margin-top:4px}
 .stat .n.blue{color:var(--blue)}.stat .n.gold{color:var(--gold)}.stat .n.ok{color:var(--ok)}.stat .n.bad{color:var(--bad)}
-.hero{background:linear-gradient(110deg,#c96442,#d98a63);color:#fff;border:0}
+.hero{background:linear-gradient(110deg,#8e1a12,#c0392b);color:#fff;border:0}
 .hero .days{font-size:46px;font-weight:800;line-height:1}.hero .sub{opacity:.9;margin-top:6px}
 input,select{padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:14px;background:#fff;outline:none}
 input:focus,select:focus{border-color:var(--blue)}
@@ -166,12 +184,12 @@ input:focus,select:focus{border-color:var(--blue)}
 .chatbox{display:flex;gap:8px;align-items:flex-end}
 .chatbox textarea{flex:1;height:54px;resize:vertical;padding:9px;border:1px solid var(--line);border-radius:9px;font-family:inherit;font-size:14px}
 .pill{display:inline-block;background:#fff;border:1px solid var(--line);border-radius:20px;padding:4px 12px;margin:3px 4px;font-size:12px;color:#555}
-.hcard{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:0 8px 30px rgba(201,100,66,.14)}
+.hcard{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:0 8px 30px rgba(179,35,26,.14)}
 .hcard .chatbox textarea{height:118px;font-size:15px;line-height:1.6}
 .hcard .chatlog{max-height:46vh;overflow-y:auto}
 .hcard .chatlog:empty{display:none}
 .hcard .chatlog:not(:empty){margin-bottom:14px;padding-bottom:6px;border-bottom:1px solid var(--line)}
-.artifact{background:var(--card);border:1px solid var(--blue);border-radius:12px;padding:14px;margin-bottom:16px;box-shadow:0 4px 16px rgba(201,100,66,.12)}
+.artifact{background:var(--card);border:1px solid var(--blue);border-radius:12px;padding:14px;margin-bottom:16px;box-shadow:0 4px 16px rgba(179,35,26,.12)}
 .artifact h4{margin:0 0 4px;font-size:14px}
 .art-it{font-size:12px;color:#5c5a52;padding:5px 0;border-bottom:1px dashed var(--line)}
 .art-it:last-child{border-bottom:0}
@@ -204,11 +222,12 @@ input:focus,select:focus{border-color:var(--blue)}
 </style>
 </head>
 <body>
+<div class="gov-strip"></div>
 
 <!-- ============ 落地页(未登录) ============ -->
 <div class="landing" id="landing" style="display:none">
  <header class="lp-top" id="lptop">
-   <div class="lp-brand">📘 行测智能题库</div>
+   <div class="lp-brand"><span style="color:var(--blue)">★</span> 行测智能题库</div>
    <div class="lp-actions">
      <span class="lnk" onclick="scrollToSec('feat')">功能</span>
      <span class="lnk" onclick="scrollToSec('flow')">怎么用</span>
@@ -219,8 +238,9 @@ input:focus,select:focus{border-color:var(--blue)}
 
  <section class="hero-sec">
    <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>
-   <div class="rv"><span class="kicker">✨ AI 驱动 · 完全免费 · 你的私人行测刷题引擎</span></div>
-   <h1 class="rv d1">把真题 PDF 交给 AI<br>变成<em>会思考的题库</em></h1>
+   <div class="stamp"><b>上岸</b><i>公考必胜</i></div>
+   <div class="rv"><span class="kicker"><span class="st">★</span> 公务员考试 · 行测备考 · 永久免费 <span class="st">★</span></span></div>
+   <h1 class="rv d1">十年寒窗志在公门<br>真题交给 AI,<em>上岸</em>事半功倍</h1>
    <p class="sub rv d2">上传任意行测真题 PDF,AI 自动切题、分类、抠图入库。<br>
      想练什么,直接跟 AI 说——它会从你的题库里精准调题,陪你刷到上岸。</p>
    <div class="hero-cta rv d3">
@@ -263,7 +283,7 @@ input:focus,select:focus{border-color:var(--blue)}
    <p>所有功能永久免费 · 注册即用 · 无任何付费墙</p>
    <button class="btn big" onclick="openAuth('register')">免费注册,立即体验 →</button>
  </section>
- <div class="lp-foot">行测智能题库 · AI 切题 · 精准抠图 · 上岸助手</div>
+ <div class="lp-foot">★ 行测智能题库 · 公务员考试行测备考平台 · 祝你早日上岸 ★</div>
 </div>
 
 <!-- 登录/注册弹窗 -->
@@ -283,12 +303,12 @@ input:focus,select:focus{border-color:var(--blue)}
 
 <div class="app" id="appwrap" style="display:none">
  <aside class="side">
-   <div class="brand">📘 行测智能题库<small>AI 切题 · 精准抠图 · 上岸助手</small></div>
+   <div class="brand"><span style="color:var(--blue)">★</span> 行测智能题库<small>公务员考试 · 行测备考平台</small></div>
    <nav class="nav" id="nav"></nav>
    <div class="side-foot">
      <div class="u" id="me-name"></div>
      <div id="online-side" style="margin-bottom:6px"></div>
-     <a onclick="logout()">退出登录</a>
+     <a onclick="changePwd()">改密码</a> · <a onclick="logout()">退出</a>
    </div>
  </aside>
  <main class="main" id="main"></main>
@@ -353,6 +373,15 @@ async function doAuth(){
 function logout(){TOKEN='';localStorage.removeItem('xc_token');USER=null;
  if(HB){clearInterval(HB);HB=null;}
  $('#appwrap').style.display='none';showLanding();}
+async function changePwd(){
+ const old=prompt('当前密码:');if(!old)return;
+ const nw=prompt('新密码(6~72位):');if(!nw)return;
+ if(nw.length<6){toast('新密码至少6位');return;}
+ const fd=new FormData();fd.append('old_password',old);fd.append('new_password',nw);
+ try{const r=await j('/api/auth/change-password',{method:'POST',body:fd});
+   if(r.token){TOKEN=r.token;localStorage.setItem('xc_token',TOKEN);toast('密码已修改,其它设备已强制下线');}
+   else toast(r.detail||'修改失败');
+ }catch(e){toast('修改失败:'+e);}}
 async function boot(){
  try{USER=await j('/api/auth/me');}catch(e){if($('#landing').style.display==='none')showLanding();return;}
  if(USER.detail){logout();return;}
@@ -615,15 +644,30 @@ V.stats=async()=>{const s=await j('/api/stats');const acc=s.accuracy==null?'—'
    <div class="stat" style="cursor:pointer" onclick="go('wrong')"><div class="n bad">${s.wrong}</div><div class="l">错题待复习 →</div></div>
    <div class="stat" style="cursor:pointer" onclick="go('fav')"><div class="n gold">${s.favorite}</div><div class="l">收藏题 →</div></div>
    <div class="stat"><div class="n">${s.active_days}</div><div class="l">学习天数</div></div></div>`;};
-V.admin=async()=>{setTimeout(()=>{loadPending();loadMetrics();},0);
+V.admin=async()=>{setTimeout(()=>{loadPending();loadMetrics();loadSettings();},0);
  return `<h2 class="page">运营管理 <span class="muted" style="font-size:13px">(管理员)</span></h2>
  <div id="metrics"><div class="card muted center">统计加载中…</div></div>
+ <div class="card"><b>⚙️ API 与系统配置</b> <span class="muted" style="font-size:12px">改完立即生效,重启不丢</span><div id="settings" style="margin-top:10px" class="muted">加载中…</div></div>
  <div class="card"><b>① 上传真题 PDF(公共题库)</b><div style="margin-top:10px"><input type="file" id="pdf" accept=".pdf"> <button class="btn" onclick="upload()">上传入库</button></div><div id="upmsg" class="muted" style="margin-top:8px"></div></div>
  <div class="card"><b>② 发布考试资讯</b><div style="margin-top:10px">
    <input id="nt" placeholder="标题" style="width:60%"> <select id="nc"><option>资讯</option><option>公告</option><option>考试时间</option></select><br>
    <input id="ns" placeholder="摘要/内容" style="width:80%;margin-top:6px"> <input id="nu" placeholder="原文链接(选填)" style="width:40%">
    <button class="btn" onclick="addNews()">发布</button></div></div>
  <div class="card"><b>③ 待确认题</b> <button class="btn sm ghost" onclick="loadPending()">刷新</button><div id="pending" style="margin-top:10px"></div></div>`;};
+const SET_LABELS={DEEPSEEK_API_KEY:'DeepSeek API Key(切题/分类/对话)',XC_EMBED_KEY:'Embedding Key(找相似/推荐,硅基流动)',
+ XC_EMBED_BASE_URL:'Embedding 服务地址',XC_EMBED_MODEL:'Embedding 模型',XC_EXAM_NAME:'目标考试名称',XC_EXAM_DATE:'考试日期(YYYY-MM-DD)'};
+async function loadSettings(){let r;try{r=await j('/api/admin/settings');}catch(e){return;}
+ if(!r.items){$('#settings').innerHTML='';return;}
+ $('#settings').innerHTML=r.items.map(it=>`
+  <div style="display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap">
+   <span style="width:280px;font-size:13px;color:var(--ink)">${SET_LABELS[it.key]||it.key}</span>
+   <span class="muted" style="font-size:12px;width:110px">${it.set?(it.secret?esc(it.value):'')+'✅':'未设置 ⚠️'}</span>
+   <input id="set-${it.key}" placeholder="${it.secret?'输入新 Key':esc(it.value)||'输入值'}" style="flex:1;min-width:180px;font-size:13px">
+   <button class="btn sm" onclick="saveSetting('${it.key}')">保存</button></div>`).join('');}
+async function saveSetting(k){const v=$('#set-'+k).value.trim();if(!v){toast('请输入值');return;}
+ const fd=new FormData();fd.append('skey',k);fd.append('sval',v);
+ const r=await j('/api/admin/settings',{method:'POST',body:fd});
+ if(r.ok){toast('已保存并生效');loadSettings();}else toast(r.detail||'失败');}
 function fmtNum(n){n=n||0;return n>=1e8?(n/1e8).toFixed(1)+'亿':n>=1e4?(n/1e4).toFixed(1)+'万':''+n;}
 async function loadMetrics(){let m;try{m=await j('/api/admin/metrics');}catch(e){return;}
  if(m.detail){$('#metrics').innerHTML='';return;}
@@ -641,6 +685,11 @@ async function loadMetrics(){let m;try{m=await j('/api/admin/metrics');}catch(e)
    <div class="stat"><div class="n">${fmtNum(t.tokens_in+t.tokens_out)}</div><div class="l">今日 token · 累计 ${fmtNum(tt.tokens_in+tt.tokens_out)}</div></div>
    <div class="stat"><div class="n blue">${fmtNum(m.bank.public)}</div><div class="l">公共题库</div></div>
    <div class="stat"><div class="n">${fmtNum(m.bank.mine)}</div><div class="l">用户私库题 · 总做题 ${fmtNum(tt.practice)}</div></div></div>
+ <div class="grid g4">
+   <div class="stat"><div class="n ${m.security.login_fail_today>20?'bad':''}">${m.security.login_fail_today}</div><div class="l">今日登录失败次数</div></div>
+   <div class="stat"><div class="n ${m.security.locked_now?'bad':''}">${m.security.locked_now}</div><div class="l">当前被锁定(防爆破)</div></div>
+   <div class="stat"><div class="l" style="margin-top:0">失败最多 IP</div><div style="font-size:12px;margin-top:6px">${(m.security.bad_ips||[]).map(b=>`${b.ip} <b style="color:var(--bad)">×${b.fails}</b>`).join('<br>')||'<span class="muted">无</span>'}</div></div>
+   <div class="stat"><div class="n ${m.ops&&m.ops.ok===false?'bad':'ok'}" style="font-size:18px">${m.ops&&m.ops.ok===false?'❌ 异常':'✅ 正常'}</div><div class="l">数据库完整性${m.ops&&m.ops.checked?' · 检于 '+m.ops.checked:''}${m.ops&&m.ops.last_backup?'<br>最近备份 '+m.ops.last_backup:''}</div></div></div>
  <div class="card"><b>📈 近 14 天对话量</b><div class="trend">${bars}</div></div>`;}
 async function upload(){const f=$('#pdf').files[0];if(!f){toast('请选 PDF');return;}
  const fd=new FormData();fd.append('file',f);$('#upmsg').textContent='上传中…';

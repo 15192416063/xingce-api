@@ -43,7 +43,6 @@ EMBED_KEY = os.getenv("XC_EMBED_KEY", "")
 EMBED_MODEL = os.getenv("XC_EMBED_MODEL", "BAAI/bge-large-zh-v1.5")
 
 # ---- 业务 ----
-ADMIN_TOKEN = os.getenv("XC_ADMIN_TOKEN", "admin123")  # 兼容旧接口(已弃用)
 CATEGORIES_L1 = ["言语理解", "数量关系", "判断推理", "资料分析", "常识判断", "政治理论"]
 # 考试倒计时(可改成你的目标考试)
 EXAM_NAME = os.getenv("XC_EXAM_NAME", "2027国家公务员考试")
@@ -57,8 +56,26 @@ if not SECRET_KEY:
     import secrets as _secrets
     SECRET_KEY = _secrets.token_hex(32)  # 临时随机(重启即失效,仅开发用)
 TOKEN_TTL_DAYS = 30
-# 首位注册者自动成为管理员;也可用此口令注册管理员
-ADMIN_SIGNUP_CODE = os.getenv("XC_ADMIN_CODE", "make-me-admin")
+# 首位注册者自动成为管理员;也可用此口令注册管理员。
+# ⚠️ 不设环境变量时,口令注册管理员功能自动关闭(防止默认口令被人利用提权)。
+ADMIN_SIGNUP_CODE = os.getenv("XC_ADMIN_CODE", "")
+
+# ---- 安全防护 ----
+# 单设备登录:新登录使旧设备令牌全部失效(防共号/防令牌被盗后长期可用)
+SINGLE_DEVICE = os.getenv("XC_SINGLE_DEVICE", "true").lower() == "true"
+# 登录爆破防护:同一 用户名+IP 连错 N 次锁 M 秒
+LOGIN_MAX_FAILS = int(os.getenv("XC_LOGIN_MAX_FAILS", "5"))
+LOGIN_LOCK_SECS = int(os.getenv("XC_LOGIN_LOCK_SECS", "900"))
+# 接口限流(每IP每分钟):全局 / 认证类 / AI类
+RL_GLOBAL_PER_MIN = int(os.getenv("XC_RL_GLOBAL", "240"))
+RL_AUTH_PER_MIN = int(os.getenv("XC_RL_AUTH", "15"))
+RL_AI_PER_MIN = int(os.getenv("XC_RL_AI", "12"))
+# 部署在 Nginx/Caddy 后面时设 true,用 X-Forwarded-For 取真实IP做限流
+TRUST_PROXY = os.getenv("XC_TRUST_PROXY", "false").lower() == "true"
+# 管理员上传 PDF 大小上限(MB)
+ADMIN_PDF_MAX_MB = int(os.getenv("XC_ADMIN_PDF_MAX_MB", "100"))
+# SQLite 自动备份:保留最近 N 天(0=关闭)
+BACKUP_KEEP = int(os.getenv("XC_BACKUP_KEEP", "7"))
 
 # ---- 免费系统 · 成本控制 ----
 # 每人每日 AI 调用硬上限(防滥用/焊死成本,管理员不限)

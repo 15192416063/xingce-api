@@ -10,6 +10,18 @@ engine = create_engine(config.DB_URL, echo=False,
                        if config.DB_URL.startswith("sqlite") else {})
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
+# SQLite 开 WAL:读写不再互斥(并发提升数倍),且断电崩溃不易损库(冗余性)
+if config.DB_URL.startswith("sqlite"):
+    from sqlalchemy import event
+
+    @event.listens_for(engine, "connect")
+    def _sqlite_pragma(dbapi_conn, _rec):
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA synchronous=NORMAL")
+        cur.execute("PRAGMA busy_timeout=5000")
+        cur.close()
+
 
 class Base(DeclarativeBase):
     pass
@@ -120,6 +132,37 @@ class User(Base):
     nickname: Mapped[str] = mapped_column(String(64), default="")
     role: Mapped[int] = mapped_column(Integer, default=0)        # 0普通 1管理员
     status: Mapped[int] = mapped_column(Integer, default=1)      # 1正常 0封禁
+    # 令牌版本:登录/改密时+1,旧令牌立即全部失效(单设备登录/吊销的核心)
+    token_ver: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class Setting(Base):
+    """运行时配置(管理员面板改 API key 等,优先级高于环境变量)"""
+    __tablename__ = "setting"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    skey: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    sval: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class AuditLog(Base):
+    """管理员操作审计(防篡改:谁在什么时候改了什么,有据可查)"""
+    __tablename__ = "audit_log"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    action: Mapped[str] = mapped_column(String(64))
+    detail: Mapped[str] = mapped_column(String(512), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class LoginLog(Base):
+    """登录审计:成功/失败都记,管理员可见(发现爆破/盗号)"""
+    __tablename__ = "login_log"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(64), index=True)
+    ip: Mapped[str] = mapped_column(String(64), default="")
+    ok: Mapped[int] = mapped_column(Integer, default=0)   # 1成功 0失败
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
