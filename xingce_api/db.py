@@ -19,6 +19,7 @@ class IngestionJob(Base):
     """入库任务(状态机:0待处理 1解析中 2入库中 3完成 4失败)"""
     __tablename__ = "ingestion_job"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, default=0, index=True)  # 0=管理员公共入库
     file_name: Mapped[str] = mapped_column(String(255))
     file_path: Mapped[str] = mapped_column(String(512))
     scope: Mapped[str] = mapped_column(String(40), default="public")
@@ -119,8 +120,6 @@ class User(Base):
     nickname: Mapped[str] = mapped_column(String(64), default="")
     role: Mapped[int] = mapped_column(Integer, default=0)        # 0普通 1管理员
     status: Mapped[int] = mapped_column(Integer, default=1)      # 1正常 0封禁
-    membership_level: Mapped[int] = mapped_column(Integer, default=0)  # 0免费 1月度 2年度
-    membership_expire: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
@@ -131,6 +130,25 @@ class AiUsage(Base):
     user_id: Mapped[int] = mapped_column(Integer, index=True)
     day: Mapped[str] = mapped_column(String(10), index=True)   # YYYY-MM-DD
     count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class StatDaily(Base):
+    """每日运营统计:PV/对话次数/token 消耗(管理员面板用)"""
+    __tablename__ = "stat_daily"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    day: Mapped[str] = mapped_column(String(10), unique=True, index=True)  # YYYY-MM-DD
+    pv: Mapped[int] = mapped_column(Integer, default=0)            # 页面打开人次
+    chat_count: Mapped[int] = mapped_column(Integer, default=0)    # AI 对话次数
+    tokens_in: Mapped[int] = mapped_column(Integer, default=0)     # LLM 输入 token
+    tokens_out: Mapped[int] = mapped_column(Integer, default=0)    # LLM 输出 token
+
+
+class VisitDay(Base):
+    """用户-日 访问记录(算 UV/日活)"""
+    __tablename__ = "visit_day"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    day: Mapped[str] = mapped_column(String(10), index=True)
 
 
 class News(Base):

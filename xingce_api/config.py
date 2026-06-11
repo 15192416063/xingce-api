@@ -60,19 +60,19 @@ TOKEN_TTL_DAYS = 30
 # 首位注册者自动成为管理员;也可用此口令注册管理员
 ADMIN_SIGNUP_CODE = os.getenv("XC_ADMIN_CODE", "make-me-admin")
 
-# ---- 会员/内测 ----
-# 内测期:置 True 则所有付费功能免费开放(拉新验证用);正式收费时改 False
-BETA_FREE = os.getenv("XC_BETA_FREE", "true").lower() == "true"
-# 免费版每日 AI 额度(解析/找相似);会员不限
-FREE_DAILY_AI = int(os.getenv("XC_FREE_DAILY_AI", "20"))
+# ---- 免费系统 · 成本控制 ----
 # 每人每日 AI 调用硬上限(防滥用/焊死成本,管理员不限)
-AI_DAILY_CAP = int(os.getenv("XC_AI_DAILY_CAP", "50"))
-MEMBERSHIP_PLANS = [
-    {"level": 1, "name": "月度会员", "price": 19, "days": 30,
-     "perks": ["AI 解析/找相似不限量", "上传私有题库 3000 题", "模拟考试", "数据深度分析"]},
-    {"level": 2, "name": "年度会员", "price": 149, "days": 365,
-     "perks": ["月度全部权益", "上传 30000 题", "智能组卷", "优先客服"]},
-]
+AI_DAILY_CAP = int(os.getenv("XC_AI_DAILY_CAP", "30"))
+# 私有题库容量(全员统一;一份真题卷约130题,够十几套)
+MINE_CAP = int(os.getenv("XC_MINE_CAP", "2000"))
+# 用户上传 PDF 大小上限(MB)与每日上传份数上限
+MINE_PDF_MAX_MB = int(os.getenv("XC_MINE_PDF_MAX_MB", "30"))
+MINE_PDF_DAILY = int(os.getenv("XC_MINE_PDF_DAILY", "3"))
+# 每日刷题目标(留存:首页进度条)
+DAILY_GOAL = int(os.getenv("XC_DAILY_GOAL", "20"))
+# DeepSeek 价格(¥/百万token),管理员成本面板估算用,价格变了改这里
+PRICE_IN_PER_M = float(os.getenv("XC_PRICE_IN", "2"))
+PRICE_OUT_PER_M = float(os.getenv("XC_PRICE_OUT", "8"))
 
 for d in (PDF_DIR, IMAGE_DIR, VECTOR_DIR):
     os.makedirs(d, exist_ok=True)

@@ -81,10 +81,15 @@ def _user_from_header(authorization: str):
 
 
 def current_user(authorization: str = Header(default="")):
-    """登录用户(必须)。未登录抛401。"""
+    """登录用户(必须)。未登录抛401。每次请求顺手记在线心跳。"""
     u = _user_from_header(authorization)
     if not u or u.status != 1:
         raise HTTPException(401, "未登录或登录已过期")
+    try:
+        import stats
+        stats.touch_online(u.id)
+    except Exception:
+        pass
     return u
 
 

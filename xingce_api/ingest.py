@@ -69,6 +69,8 @@ def run(job_id: int):
     job = db.get(IngestionJob, job_id)
     pdf_path, scope, source = job.file_path, job.scope, job.file_name
     db.close()
+    # 用户私有库:无管理员审核环节,抠图/资料分析题直接入池
+    auto_ok = scope.startswith("user:")
 
     try:
         _set(job_id, status=1, progress=2)  # 解析中
@@ -166,7 +168,8 @@ def run(job_id: int):
                           category_l1=l1, category_l2=l2, topic_summary=summary,
                           difficulty=diff, content=textutil.clean_text(body, doc_noise),
                           fingerprint=fp,
-                          has_image=1, confidence=conf, status=0)  # 待确认
+                          has_image=1, confidence=conf,
+                          status=1 if auto_ok else 0)  # 公共库待确认,私库直接入池
             db.add(qe)
             db.commit()
             qid = qe.id
@@ -229,7 +232,8 @@ def run(job_id: int):
                               content=textutil.clean_text(body, doc_noise),
                               fingerprint=fp,
                               has_image=1 if (mat_imgs or opt_imgs) else 0,
-                              confidence=60, status=0)  # 待确认
+                              confidence=60,
+                              status=1 if auto_ok else 0)  # 公共库待确认,私库直接入池
                 db.add(qe)
                 db.commit()
                 qid = qe.id

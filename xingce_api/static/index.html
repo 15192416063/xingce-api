@@ -9,23 +9,112 @@
  --muted:#86847c;--line:#e6e1d5;--ok:#5a7d4f;--bad:#bb5340;--gold:#bd8a3a;
  --serif:"Songti SC","Noto Serif SC",Georgia,"Times New Roman",serif;}
 *{box-sizing:border-box}
+html{scroll-behavior:smooth}
 body{margin:0;font-family:system-ui,-apple-system,"Microsoft YaHei",sans-serif;
  background:var(--bg);color:var(--ink);font-size:14px}
 .serif{font-family:var(--serif)}
 a{color:inherit;text-decoration:none}
-/* 登录门 */
-.gate{position:fixed;inset:0;background:linear-gradient(120deg,#efe9dc,#e3d4c2);
- display:flex;align-items:center;justify-content:center;z-index:50}
-.gate .box{background:var(--card);border-radius:16px;padding:30px 32px;width:340px;box-shadow:0 20px 60px rgba(80,60,40,.18)}
-.gate h1{margin:0 0 4px;font-size:23px;color:var(--ink);font-family:var(--serif);font-weight:600}.gate p{margin:0 0 18px;color:var(--muted);font-size:13px}
-.gate input{width:100%;padding:11px;margin:7px 0;border:1px solid var(--line);border-radius:9px;font-size:15px}
-.gate .btn{width:100%;margin-top:10px;padding:12px}
-.gate .sw{text-align:center;margin-top:14px;color:var(--blue);cursor:pointer;font-size:13px}
-.gate .err{color:var(--bad);font-size:13px;min-height:18px;margin-top:6px}
-/* 布局 */
+
+/* ============ 落地页 ============ */
+.landing{position:relative;min-height:100vh;overflow-x:hidden}
+.lp-top{position:fixed;top:0;left:0;right:0;z-index:40;display:flex;align-items:center;
+ justify-content:space-between;padding:14px 5vw;transition:.3s;
+ backdrop-filter:blur(0px)}
+.lp-top.scrolled{background:rgba(255,253,248,.86);backdrop-filter:blur(14px);
+ box-shadow:0 1px 0 var(--line)}
+.lp-brand{font-family:var(--serif);font-size:19px;font-weight:700;display:flex;align-items:center;gap:8px}
+.lp-actions{display:flex;gap:10px;align-items:center}
+.lp-actions .lnk{color:#5c5a52;font-size:14px;padding:6px 10px;cursor:pointer}
+.lp-actions .lnk:hover{color:var(--blue)}
+.btn{background:var(--blue);color:#fff;border:0;border-radius:9px;padding:9px 18px;cursor:pointer;font-size:14px;transition:.2s}
+.btn:hover{background:var(--blue-d);transform:translateY(-1px)}
+.btn:disabled{opacity:.5}
+.btn.ghost{background:transparent;color:var(--blue);border:1.5px solid var(--blue)}
+.btn.ghost:hover{background:rgba(201,100,66,.08)}
+.btn.gray{background:#eceff5;color:#555}
+.btn.sm{padding:5px 11px;font-size:13px}
+.btn.ok{background:var(--ok)}.btn.bad{background:var(--bad)}
+.btn.gold{background:var(--gold);color:#fff}
+.btn.big{padding:14px 32px;font-size:16px;border-radius:12px}
+
+/* 英雄区 */
+.hero-sec{position:relative;padding:140px 5vw 90px;text-align:center;overflow:hidden}
+.blob{position:absolute;border-radius:50%;filter:blur(70px);opacity:.45;pointer-events:none;
+ animation:drift 16s ease-in-out infinite alternate}
+.blob.b1{width:480px;height:480px;background:#e8b59a;top:-140px;left:-100px}
+.blob.b2{width:380px;height:380px;background:#d9c79a;bottom:-120px;right:-80px;animation-delay:-8s}
+.blob.b3{width:300px;height:300px;background:#c9d4b4;top:30%;right:18%;animation-delay:-4s;opacity:.3}
+@keyframes drift{from{transform:translate(0,0) scale(1)}to{transform:translate(50px,36px) scale(1.12)}}
+.hero-sec .kicker{display:inline-block;background:rgba(201,100,66,.1);color:var(--blue-d);
+ border:1px solid rgba(201,100,66,.25);border-radius:30px;padding:6px 16px;font-size:13px;margin-bottom:22px}
+.hero-sec h1{font-family:var(--serif);font-size:clamp(34px,5.4vw,58px);font-weight:700;
+ line-height:1.25;margin:0 0 18px;letter-spacing:.01em}
+.hero-sec h1 em{font-style:normal;color:var(--blue);position:relative}
+.hero-sec .sub{color:#6b6960;font-size:clamp(15px,1.6vw,18px);max-width:620px;margin:0 auto 34px;line-height:1.9}
+.hero-cta{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+.hero-stats{display:flex;gap:0;justify-content:center;margin-top:64px;flex-wrap:wrap}
+.hstat{padding:0 38px;border-right:1px solid var(--line);text-align:center}
+.hstat:last-child{border-right:0}
+.hstat .n{font-size:30px;font-weight:800;color:var(--ink);font-family:var(--serif)}
+.hstat .n span{color:var(--blue);font-size:20px}
+.hstat .l{color:var(--muted);font-size:12px;margin-top:4px}
+/* 滚动浮现 */
+.rv{opacity:0;transform:translateY(28px);transition:opacity .7s ease,transform .7s ease}
+.rv.in{opacity:1;transform:none}
+.rv.d1{transition-delay:.08s}.rv.d2{transition-delay:.16s}.rv.d3{transition-delay:.24s}.rv.d4{transition-delay:.32s}
+/* 功能区 */
+.feat-sec{padding:60px 5vw 80px;max-width:1140px;margin:0 auto}
+.sec-h{font-family:var(--serif);font-size:clamp(24px,3vw,34px);text-align:center;font-weight:700;margin:0 0 10px}
+.sec-sub{text-align:center;color:var(--muted);margin:0 0 44px;font-size:15px}
+.feat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:20px}
+.feat{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:28px 24px;
+ transition:.25s;position:relative;overflow:hidden}
+.feat:hover{transform:translateY(-5px);box-shadow:0 18px 44px rgba(80,60,40,.12);border-color:rgba(201,100,66,.4)}
+.feat .fi{width:46px;height:46px;border-radius:12px;background:rgba(201,100,66,.1);
+ display:flex;align-items:center;justify-content:center;font-size:23px;margin-bottom:14px}
+.feat h3{margin:0 0 8px;font-size:16px;font-family:var(--serif)}
+.feat p{margin:0;color:#6b6960;font-size:13px;line-height:1.8}
+/* 工作流区 */
+.flow-sec{padding:30px 5vw 90px;max-width:980px;margin:0 auto}
+.flow{display:flex;gap:0;align-items:stretch;flex-wrap:wrap;justify-content:center}
+.fstep{flex:1;min-width:200px;text-align:center;padding:0 18px;position:relative}
+.fstep .num{width:54px;height:54px;border-radius:50%;background:linear-gradient(135deg,var(--blue),#d98a63);
+ color:#fff;font-size:22px;font-weight:800;display:flex;align-items:center;justify-content:center;
+ margin:0 auto 16px;font-family:var(--serif);box-shadow:0 8px 20px rgba(201,100,66,.3)}
+.fstep h4{margin:0 0 6px;font-size:15px;font-family:var(--serif)}
+.fstep p{color:#6b6960;font-size:13px;line-height:1.8;margin:0}
+.fstep:not(:last-child):after{content:"→";position:absolute;right:-12px;top:14px;font-size:22px;color:#cfc8b8}
+@media(max-width:760px){.fstep:not(:last-child):after{display:none}}
+/* 底部CTA */
+.cta-sec{margin:0 5vw 70px;border-radius:24px;padding:64px 8vw;text-align:center;
+ background:linear-gradient(115deg,#c96442,#d98a63 60%,#bd8a3a);color:#fff;position:relative;overflow:hidden}
+.cta-sec h2{font-family:var(--serif);font-size:clamp(24px,3.4vw,36px);margin:0 0 12px}
+.cta-sec p{opacity:.92;margin:0 0 30px;font-size:15px}
+.cta-sec .btn{background:#fff;color:var(--blue-d);font-weight:600}
+.cta-sec .btn:hover{background:#fff4ec}
+.lp-foot{text-align:center;color:var(--muted);font-size:12px;padding:0 0 34px}
+
+/* 登录弹窗 */
+.modal-mask{position:fixed;inset:0;background:rgba(43,42,39,.45);backdrop-filter:blur(4px);
+ z-index:60;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:.25s}
+.modal-mask.show{opacity:1;pointer-events:auto}
+.auth-box{background:var(--card);border-radius:20px;padding:34px 36px;width:360px;max-width:92vw;
+ box-shadow:0 30px 80px rgba(40,30,20,.3);transform:translateY(16px) scale(.97);transition:.28s}
+.modal-mask.show .auth-box{transform:none}
+.auth-box h1{margin:0 0 4px;font-size:22px;font-family:var(--serif);font-weight:700}
+.auth-box .x{position:absolute;top:14px;right:18px;font-size:22px;color:var(--muted);cursor:pointer;border:0;background:none}
+.auth-box{position:relative}
+.auth-box p{margin:0 0 18px;color:var(--muted);font-size:13px}
+.auth-box input{width:100%;padding:12px;margin:7px 0;border:1px solid var(--line);border-radius:10px;font-size:15px;background:#fff;outline:none;transition:.15s}
+.auth-box input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(201,100,66,.12)}
+.auth-box .btn{width:100%;margin-top:12px;padding:13px}
+.auth-box .sw{text-align:center;margin-top:16px;color:var(--blue);cursor:pointer;font-size:13px}
+.auth-box .err{color:var(--bad);font-size:13px;min-height:18px;margin-top:6px}
+
+/* ============ 应用壳 ============ */
 .app{display:flex;min-height:100vh}
 .side{width:204px;background:#eae6da;color:#5c5a52;border-right:1px solid var(--line);
- position:fixed;top:0;bottom:0;left:0;padding:18px 0;display:flex;flex-direction:column}
+ position:fixed;top:0;bottom:0;left:0;padding:18px 0;display:flex;flex-direction:column;z-index:20}
 .brand{font-family:var(--serif);font-size:19px;font-weight:600;color:var(--ink);padding:0 20px 14px}
 .brand small{display:block;font-size:11px;color:#86847c;font-weight:400;margin-top:4px;font-family:system-ui}
 .nav a{display:flex;align-items:center;gap:10px;padding:11px 20px;cursor:pointer;color:#5c5a52;border-left:3px solid transparent;font-size:14px}
@@ -34,9 +123,9 @@ a{color:inherit;text-decoration:none}
 .ico{width:18px;text-align:center}
 .side-foot{margin-top:auto;padding:14px 20px;font-size:11px;color:#86847c}
 .side-foot .u{color:var(--ink);font-size:13px;margin-bottom:6px}
-.side-foot .badge{display:inline-block;background:var(--gold);color:#fff;border-radius:4px;padding:1px 6px;font-size:11px}
 .side-foot a{color:var(--blue);cursor:pointer}
-.main{margin-left:204px;flex:1;padding:22px 34px;max-width:1060px}
+.main{margin-left:204px;flex:1;padding:22px 34px;max-width:1060px;animation:fadein .35s ease}
+@keyframes fadein{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 h2.page{margin:0 0 18px;font-size:22px;font-family:var(--serif);font-weight:600}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:16px;box-shadow:0 1px 3px rgba(80,60,40,.05)}
 .grid{display:grid;gap:14px}.g4{grid-template-columns:repeat(4,1fr)}.g3{grid-template-columns:repeat(3,1fr)}.g2{grid-template-columns:repeat(2,1fr)}
@@ -46,16 +135,13 @@ h2.page{margin:0 0 18px;font-size:22px;font-family:var(--serif);font-weight:600}
 .stat .n.blue{color:var(--blue)}.stat .n.gold{color:var(--gold)}.stat .n.ok{color:var(--ok)}.stat .n.bad{color:var(--bad)}
 .hero{background:linear-gradient(110deg,#c96442,#d98a63);color:#fff;border:0}
 .hero .days{font-size:46px;font-weight:800;line-height:1}.hero .sub{opacity:.9;margin-top:6px}
-.btn{background:var(--blue);color:#fff;border:0;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:14px}
-.btn:hover{background:var(--blue-d)}.btn:disabled{opacity:.5}
-.btn.ghost{background:#eef2fb;color:var(--blue)}.btn.gray{background:#eceff5;color:#555}
-.btn.sm{padding:5px 11px;font-size:13px}.btn.ok{background:var(--ok)}.btn.bad{background:var(--bad)}.btn.gold{background:var(--gold);color:#5a3d00}
 input,select{padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:14px;background:#fff;outline:none}
 input:focus,select:focus{border-color:var(--blue)}
 .chip{display:inline-block;padding:3px 10px;border-radius:20px;background:#f3ece0;color:var(--blue);font-size:12px;margin:0 6px 6px 0;cursor:pointer}
 .chip.on{background:var(--blue);color:#fff}
 .tag{display:inline-block;background:#f3ece0;color:var(--blue);border-radius:5px;padding:2px 8px;font-size:12px;margin-right:6px}
 .tag.diff{background:#fff4e5;color:#c9810a}
+.tag.mine{background:#e8f0e4;color:var(--ok)}
 .q{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:14px}
 .q .stem{font-size:15px;line-height:1.9;margin:6px 0}
 .q img{max-width:100%;max-height:360px;height:auto;width:auto;object-fit:contain;border:1px solid var(--line);border-radius:8px;margin:8px 0;background:#fff;display:block;cursor:zoom-in}
@@ -85,12 +171,10 @@ input:focus,select:focus{border-color:var(--blue)}
 .hcard .chatlog{max-height:46vh;overflow-y:auto}
 .hcard .chatlog:empty{display:none}
 .hcard .chatlog:not(:empty){margin-bottom:14px;padding-bottom:6px;border-bottom:1px solid var(--line)}
-/* 右侧 artifact 题目集面板 */
 .artifact{background:var(--card);border:1px solid var(--blue);border-radius:12px;padding:14px;margin-bottom:16px;box-shadow:0 4px 16px rgba(201,100,66,.12)}
 .artifact h4{margin:0 0 4px;font-size:14px}
 .art-it{font-size:12px;color:#5c5a52;padding:5px 0;border-bottom:1px dashed var(--line)}
 .art-it:last-child{border-bottom:0}
-/* Claude project 两栏:左对话 右我的题库 */
 .proj{display:flex;gap:20px;align-items:flex-start;padding-top:10px}
 .proj-main{flex:1;min-width:0}
 .proj-side{width:330px;flex-shrink:0}
@@ -104,29 +188,90 @@ input:focus,select:focus{border-color:var(--blue)}
 .ovrow:last-child{border-bottom:0}.ovrow b{color:var(--ink)}
 .res{margin-top:10px;padding:10px 12px;border-radius:8px;font-size:13px;line-height:1.7}
 .res.ok{background:#eafaf0;color:#15803d}.res.bad{background:#fdeeec;color:#b91c1c}.res.info{background:#f3ece0;color:#3355bb}
-.bar{height:8px;background:#eef1f7;border-radius:6px;overflow:hidden}.bar>i{display:block;height:100%;background:var(--blue);border-radius:6px}
+.bar{height:8px;background:#eef1f7;border-radius:6px;overflow:hidden}.bar>i{display:block;height:100%;background:var(--blue);border-radius:6px;transition:width .4s}
 .barrow{display:flex;align-items:center;gap:10px;margin:8px 0}.barrow .nm{width:74px;color:#555;font-size:13px}.barrow .pct{width:46px;text-align:right;color:var(--muted);font-size:12px}
 .trend{display:flex;align-items:flex-end;gap:8px;height:90px;margin-top:8px}.trend .col{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px}
 .trend .bk{width:60%;background:var(--blue);border-radius:4px 4px 0 0;min-height:2px}.trend .dt{font-size:10px;color:var(--muted)}
 .muted{color:var(--muted)}.center{text-align:center}
 .news-it{display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
 .news-it .cat{flex-shrink:0;background:#f3ece0;color:var(--blue);border-radius:5px;padding:2px 8px;font-size:12px;height:fit-content}
-.plan{border:2px solid var(--line);border-radius:12px;padding:20px;text-align:center}
-.plan.hot{border-color:var(--gold);position:relative}
-.plan .price{font-size:34px;font-weight:800;color:var(--blue)}.plan .price small{font-size:14px;color:var(--muted)}
-.plan li{text-align:left;color:#555;margin:6px 0;list-style:none;font-size:13px}.plan ul{padding:0;margin:14px 0}
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#222;color:#fff;padding:10px 18px;border-radius:8px;opacity:0;transition:.3s;z-index:99;font-size:13px}
 .toast.show{opacity:.95}
-.upsell{background:linear-gradient(110deg,#fff7e6,#ffeccc);border:1px solid #f5d28a;border-radius:12px;padding:14px 18px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between}
+/* 用户 PDF 上传 */
+.updrop{border:2px dashed var(--line);border-radius:12px;padding:18px;text-align:center;cursor:pointer;transition:.2s;font-size:13px;color:var(--muted);margin-top:10px}
+.updrop:hover,.updrop.over{border-color:var(--blue);background:#faf4ee;color:var(--blue-d)}
+.upjob{margin-top:10px;font-size:12px;color:#5c5a52}
 </style>
 </head>
 <body>
 
-<!-- 登录/注册门 -->
-<div class="gate" id="gate">
- <div class="box">
-   <h1>📘 行测智能题库</h1>
-   <p id="gate-sub">登录后开始刷题上岸</p>
+<!-- ============ 落地页(未登录) ============ -->
+<div class="landing" id="landing" style="display:none">
+ <header class="lp-top" id="lptop">
+   <div class="lp-brand">📘 行测智能题库</div>
+   <div class="lp-actions">
+     <span class="lnk" onclick="scrollToSec('feat')">功能</span>
+     <span class="lnk" onclick="scrollToSec('flow')">怎么用</span>
+     <button class="btn ghost" onclick="openAuth('login')">登录</button>
+     <button class="btn" onclick="openAuth('register')">免费注册</button>
+   </div>
+ </header>
+
+ <section class="hero-sec">
+   <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>
+   <div class="rv"><span class="kicker">✨ AI 驱动 · 完全免费 · 你的私人行测刷题引擎</span></div>
+   <h1 class="rv d1">把真题 PDF 交给 AI<br>变成<em>会思考的题库</em></h1>
+   <p class="sub rv d2">上传任意行测真题 PDF,AI 自动切题、分类、抠图入库。<br>
+     想练什么,直接跟 AI 说——它会从你的题库里精准调题,陪你刷到上岸。</p>
+   <div class="hero-cta rv d3">
+     <button class="btn big" onclick="openAuth('register')">立即开始 · 免费</button>
+     <button class="btn big ghost" onclick="scrollToSec('flow')">看看怎么用 ↓</button>
+   </div>
+   <div class="hero-stats rv d4">
+     <div class="hstat"><div class="n" data-count="6">0</div><div class="l">大题型全覆盖</div></div>
+     <div class="hstat"><div class="n" data-count="40" data-suffix="+">0</div><div class="l">细分考点智能识别</div></div>
+     <div class="hstat"><div class="n" data-count="3" data-suffix="分钟">0</div><div class="l">一份 PDF 入库</div></div>
+     <div class="hstat"><div class="n" data-count="24" data-suffix="h">0</div><div class="l">AI 助教在线</div></div>
+   </div>
+ </section>
+
+ <section class="feat-sec" id="feat">
+   <h2 class="sec-h rv">为上岸设计的每一个功能</h2>
+   <p class="sec-sub rv">从「攒题」到「刷题」到「补弱」,一条龙闭环</p>
+   <div class="feat-grid">
+     <div class="feat rv"><div class="fi">📄</div><h3>PDF 智能入库</h3><p>上传真题 PDF,AI 自动切题、判断题型、提炼考点;图形推理精确抠图,资料分析整组关联材料。</p></div>
+     <div class="feat rv d1"><div class="fi">🤖</div><h3>对话式调题</h3><p>「来几道图形推理」「行程问题怎么秒解」——AI 听得懂,优先从你上传的题里调,不够再从公共库补。</p></div>
+     <div class="feat rv d2"><div class="fi">🎯</div><h3>考点相似检索</h3><p>每道题向量化存储。做错一题,一键找出同考点的题反复练,弱点逐个击破。</p></div>
+     <div class="feat rv d3"><div class="fi">📕</div><h3>错题本 + 数据</h3><p>自动归集错题、追踪正确率与连续打卡;各题型掌握度一目了然,复习不再凭感觉。</p></div>
+     <div class="feat rv"><div class="fi">📥</div><h3>一键导出 PDF</h3><p>AI 推荐的题目集可直接导出成排版好的 PDF,打印出来线下练,含答案解析页。</p></div>
+     <div class="feat rv d1"><div class="fi">⏳</div><h3>考试倒计时</h3><p>距考试还有几天、今天刷了几题、连续坚持多少天——首页一眼看到,保持节奏感。</p></div>
+   </div>
+ </section>
+
+ <section class="flow-sec" id="flow">
+   <h2 class="sec-h rv">三步,把纸质真题变成智能题库</h2>
+   <p class="sec-sub rv">不需要任何整理,AI 替你完成所有脏活</p>
+   <div class="flow">
+     <div class="fstep rv"><div class="num">1</div><h4>上传 PDF</h4><p>任意行测真题/模拟卷 PDF 直接拖进来,几分钟自动解析完成。</p></div>
+     <div class="fstep rv d1"><div class="num">2</div><h4>AI 切题入库</h4><p>自动拆分每道题、识别题型考点、抠出图形题配图,进入你的私有题库。</p></div>
+     <div class="fstep rv d2"><div class="num">3</div><h4>对话刷题</h4><p>跟 AI 说想练什么,它从你的题库精准调题;做错自动进错题本。</p></div>
+   </div>
+ </section>
+
+ <section class="cta-sec rv">
+   <h2>今天上传第一份真题,明天开始智能刷题</h2>
+   <p>所有功能永久免费 · 注册即用 · 无任何付费墙</p>
+   <button class="btn big" onclick="openAuth('register')">免费注册,立即体验 →</button>
+ </section>
+ <div class="lp-foot">行测智能题库 · AI 切题 · 精准抠图 · 上岸助手</div>
+</div>
+
+<!-- 登录/注册弹窗 -->
+<div class="modal-mask" id="authmask" onclick="if(event.target===this)closeAuth()">
+ <div class="auth-box">
+   <button class="x" onclick="closeAuth()">×</button>
+   <h1 id="auth-title">欢迎回来</h1>
+   <p id="gate-sub">登录后继续刷题上岸</p>
    <input id="g-user" placeholder="用户名(≥3位)" autocomplete="username">
    <input id="g-pass" type="password" placeholder="密码(≥6位)" autocomplete="current-password">
    <input id="g-code" placeholder="管理员邀请码(选填)" style="display:none">
@@ -142,7 +287,8 @@ input:focus,select:focus{border-color:var(--blue)}
    <nav class="nav" id="nav"></nav>
    <div class="side-foot">
      <div class="u" id="me-name"></div>
-     <a onclick="go('membership')">💎 会员中心</a> · <a onclick="logout()">退出</a>
+     <div id="online-side" style="margin-bottom:6px"></div>
+     <a onclick="logout()">退出登录</a>
    </div>
  </aside>
  <main class="main" id="main"></main>
@@ -167,36 +313,66 @@ function showQ(s){let h=esc(s||'');h=h.replace(/^\s*\d{1,3}[\.、．]\s*/,'');
  h=h.replace(/[ABCD][\.、．]\s*(?=[ABCD][\.、．]|\s*$)/g,'');
  h=h.replace(/\s*(?=[ABCD][\.、．])/g,'\n');return h.replace(/\n/g,'<br>').trim();}
 
+/* ---------- 落地页 ---------- */
+function showLanding(){
+ $('#landing').style.display='block';$('#appwrap').style.display='none';
+ trackVisit();
+ // 滚动浮现
+ const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}});},{threshold:.12});
+ document.querySelectorAll('.rv').forEach(el=>io.observe(el));
+ // 顶栏滚动变色
+ window.addEventListener('scroll',()=>{$('#lptop').classList.toggle('scrolled',window.scrollY>30);},{passive:true});
+ // 数字滚动
+ const nio=new IntersectionObserver(es=>{es.forEach(e=>{if(!e.isIntersecting)return;nio.unobserve(e.target);
+   const el=e.target,target=+el.dataset.count,suf=el.dataset.suffix||'';let cur=0;
+   const step=Math.max(1,Math.ceil(target/36));
+   const tm=setInterval(()=>{cur+=step;if(cur>=target){cur=target;clearInterval(tm);}
+     el.innerHTML=cur+(suf?`<span>${suf}</span>`:'');},28);});},{threshold:.5});
+ document.querySelectorAll('.hstat .n').forEach(el=>nio.observe(el));
+}
+function scrollToSec(id){const el=document.getElementById(id);if(el)el.scrollIntoView({behavior:'smooth'});}
+function openAuth(mode){AUTH_MODE=mode||'login';syncAuthUI();$('#authmask').classList.add('show');setTimeout(()=>$('#g-user').focus(),250);}
+function closeAuth(){$('#authmask').classList.remove('show');}
+
 /* ---------- 认证 ---------- */
-function swAuth(){AUTH_MODE=AUTH_MODE==='login'?'register':'login';
- $('#gate-sub').textContent=AUTH_MODE==='login'?'登录后开始刷题上岸':'注册新账号,免费开练';
+function syncAuthUI(){
+ $('#auth-title').textContent=AUTH_MODE==='login'?'欢迎回来':'创建账号';
+ $('#gate-sub').textContent=AUTH_MODE==='login'?'登录后继续刷题上岸':'注册新账号,免费开练';
  $('#g-btn').textContent=AUTH_MODE==='login'?'登录':'注册';
  $('#g-code').style.display=AUTH_MODE==='register'?'block':'none';
  $('#g-sw').textContent=AUTH_MODE==='login'?'没有账号?去注册 →':'已有账号?去登录 →';
  $('#g-err').textContent='';}
+function swAuth(){AUTH_MODE=AUTH_MODE==='login'?'register':'login';syncAuthUI();}
 async function doAuth(){
  const fd=new FormData();fd.append('username',$('#g-user').value);fd.append('password',$('#g-pass').value);
  if(AUTH_MODE==='register')fd.append('admin_code',$('#g-code').value);
  const r=await j('/api/auth/'+AUTH_MODE,{method:'POST',body:fd});
  if(r.detail){$('#g-err').textContent=r.detail;return;}
- TOKEN=r.token;localStorage.setItem('xc_token',TOKEN);USER=r.user;boot();
+ TOKEN=r.token;localStorage.setItem('xc_token',TOKEN);USER=r.user;closeAuth();boot();
 }
 function logout(){TOKEN='';localStorage.removeItem('xc_token');USER=null;
- $('#appwrap').style.display='none';$('#gate').style.display='flex';}
+ if(HB){clearInterval(HB);HB=null;}
+ $('#appwrap').style.display='none';showLanding();}
 async function boot(){
- try{USER=await j('/api/auth/me');}catch(e){return;}
+ try{USER=await j('/api/auth/me');}catch(e){if($('#landing').style.display==='none')showLanding();return;}
  if(USER.detail){logout();return;}
- $('#gate').style.display='none';$('#appwrap').style.display='flex';
- // 导航(管理员多一个题库管理)
+ $('#landing').style.display='none';$('#appwrap').style.display='flex';window.scrollTo(0,0);
  let nav=[['home','🤖','AI助教(首页)'],['practice','✏️','刷题练习'],['wrong','📕','错题本'],
-   ['fav','⭐','收藏夹'],['news','📰','考试资讯'],['stats','📊','学习数据'],['membership','💎','会员中心']];
- if(USER.role===1)nav.push(['admin','🔑','题库管理']);
+   ['fav','⭐','收藏夹'],['news','📰','考试资讯'],['stats','📊','学习数据']];
+ if(USER.role===1)nav.push(['admin','🔑','运营管理']);
  $('#nav').innerHTML=nav.map(n=>`<a data-v="${n[0]}"><span class="ico">${n[1]}</span>${n[2]}</a>`).join('');
  $('#nav').onclick=e=>{const a=e.target.closest('a');if(a)go(a.dataset.v);};
- const badge=USER.is_member?'<span class="badge">会员</span>':'';
- $('#me-name').innerHTML=`👤 ${esc(USER.nickname)} ${badge}${USER.role===1?' · 管理员':''}`;
+ $('#me-name').innerHTML=`👤 ${esc(USER.nickname)}${USER.role===1?' · 管理员':''}`;
+ trackVisit();startHeartbeat();
  go('home');
 }
+/* 在线人数心跳:每90秒拉一次(本身也算活跃心跳) */
+let HB=null;
+async function pollOnline(){try{const r=await j('/api/online');
+ const el=$('#online-side');if(el)el.innerHTML=`🟢 ${r.online} 人在线刷题`;
+ const p=$('#online-pill');if(p)p.textContent=`🟢 ${r.online} 人在线`;}catch(e){}}
+function startHeartbeat(){if(HB)clearInterval(HB);pollOnline();HB=setInterval(pollOnline,90000);}
+function trackVisit(){try{fetch('/api/track/visit',{method:'POST',headers:TOKEN?{'Authorization':'Bearer '+TOKEN}:{}});}catch(e){}}
 
 /* ---------- 题目解析:拆出题干 + 选项 ---------- */
 function parseQ(content){
@@ -220,12 +396,12 @@ function qCard(q,opts={}){
  if(q.category_l2||q.category_l1)h+=`<span class="tag">${q.category_l2||q.category_l1}</span>`;
  if(q.knowledge_point)h+=`<span class="tag" style="background:#efe7d8;color:#8a6d3b">${esc(q.knowledge_point)}</span>`;
  if(q.difficulty)h+=`<span class="tag diff">${['','易','中','难'][q.difficulty]||''}</span>`;
+ if(q.mine)h+=`<span class="tag mine">📤 我的上传</span>`;
  if(q.match!=null)h+=`<span class="tag" style="background:#eafaf0;color:#15803d">匹配${Math.round(q.match*100)}%</span>`;
  if(opts.wrongCount)h+=`<span class="tag" style="background:#fdeeec;color:#b91c1c">错${opts.wrongCount}次</span>`;
  h+=`<span class="star ${q.favorited?'on':''}" onclick="toggleFav(${q.id},this)">${q.favorited?'★':'☆'}</span></div>`;
  h+=`<div class="stem">${p.stem.replace(/\n/g,'<br>')}</div>`;
  for(const im of (q.images||[]))h+=`<img src="${im}">`;
- // 选项:解析出则逐项点击;图片选项无文字则给 A/B/C/D 点击位
  let list=p.options;
  if(!list.length && q.has_image)list=['A','B','C','D'].map(k=>({k,t:''}));
  if(opts.answer!==false && list.length){
@@ -235,6 +411,7 @@ function qCard(q,opts={}){
  }
  h+=`<div class="q-foot"><button class="btn sm ghost" onclick="findSim(${q.id})">🔍 找相似</button>`;
  if(opts.master)h+=`<button class="btn sm ok" onclick="masterQ(${q.id})">✓ 已掌握</button>`;
+ if(opts.del)h+=`<button class="btn sm bad" onclick="mineDel(${q.id})">🗑 移出我的库</button>`;
  h+=`</div><div id="r${q.id}"></div></div>`;return h;
 }
 async function toggleFav(id,el){const fd=new FormData();fd.append('question_id',id);
@@ -247,7 +424,6 @@ async function pickOpt(id,k,el){
  const r=await j('/api/practice/submit',{method:'POST',body:fd});const res=$('#r'+id);
  if(r.has_answer===false||r.correct===null){
    res.className='res info';res.innerHTML='📝 已记录作答(本题答案暂未录入)。'+(r.explanation?'<br>解析:'+esc(r.explanation):'');return;}
- // 标记正确/错误选项
  [...box.children].forEach(c=>{const ck=c.querySelector('b').textContent;
    if(ck===(r.answer||'').toUpperCase())c.classList.add('correct');});
  if(r.correct){res.className='res ok';res.innerHTML='✅ 回答正确！'+(r.explanation?'<br>解析:'+esc(r.explanation):'');}
@@ -256,39 +432,51 @@ async function pickOpt(id,k,el){
 }
 async function findSim(id){const box=$('#r'+id);box.className='res info';box.innerHTML='检索中…';
  const r=await j('/api/practice/similar/'+id);
- if(r.detail){box.innerHTML='💎 '+r.detail+' <button class="btn sm gold" onclick="go(\'membership\')">去开通</button>';return;}
+ if(r.detail){box.innerHTML=r.detail;return;}
  if(!r.count){box.innerHTML='暂无足够相似的题。';return;}
  let h='<b>📎 考点相似题:</b>';for(const q of r.items)h+=`<div style="margin-top:6px">·(相似度${(1-q.distance).toFixed(2)}) ${esc(q.content).slice(0,50)}…</div>`;box.innerHTML=h;}
 async function masterQ(id){const fd=new FormData();fd.append('question_id',id);
  await j('/api/wrongbook/master',{method:'POST',body:fd});$('#q'+id).style.display='none';toast('已移出错题本');}
+async function mineDel(id){const fd=new FormData();fd.append('question_id',id);
+ const r=await j('/api/mine/delete',{method:'POST',body:fd});
+ if(r.ok){const el=$('#q'+id);if(el)el.style.display='none';toast('已移出');refreshMine();}}
 
 /* ---------- 视图 ---------- */
 const V={};
 let AI_HIST=[];
-/* 首页 = 左 AI 对话 + 右"我的题库"(Claude project 两栏布局) */
 V.home=async()=>{AI_HIST=[];let s={},mine={count:0,items:[]};
  try{s=await j('/api/stats');}catch(e){}
  try{mine=await j('/api/mine/list');}catch(e){}
  const hr=new Date().getHours();const greet=hr<11?'早上好':hr<14?'中午好':hr<18?'下午好':'晚上好';
- const pills=`<span class="pill">⏳ 距${s.exam_name||'考试'} ${s.exam_days_left!=null?s.exam_days_left:'—'}天</span><span class="pill">🔥 连续${s.streak||0}天</span><span class="pill">今日 ${s.today_count||0} 题</span>`;
  const sug=['帮我找几道图形推理题练练','行程问题的相遇追及怎么秒解?','资料分析的增长率怎么算最快','类比推理有哪些常见关系?'];
- const up=s.is_member?'':`<div class="upsell" style="margin-top:14px"><div>💎 开通会员:AI解析不限量 · 私有题库扩容 · 模拟考试</div><button class="btn gold" onclick="go('membership')">立即开通</button></div>`;
+ const rk=s.rank||{};
+ const goal=s.daily_goal||20;const gd=Math.min(s.today_count||0,goal);const gp=Math.round(gd/goal*100);
+ const goalbar=`<div style="margin-top:12px"><div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted)">
+   <span>🎯 今日目标 ${gd}/${goal} 题${gd>=goal?' · 已达成 🎉':''}</span><span>${gp}%</span></div>
+   <div class="cap"><i style="width:${gp}%;background:${gd>=goal?'var(--ok)':'var(--blue)'}"></i></div></div>`;
+ const rankrow=rk.name?`<div class="ovrow"><span>${rk.icon||'🏅'} 当前段位</span><b>${rk.name}</b></div>
+   ${rk.next?`<div class="ovrow"><span>↗ 距「${rk.next}」</span><b>还差 ${rk.need} 题</b></div>`:''}`:'';
  const ov=`<div class="ovrow"><span>⏳ 距${s.exam_name||'考试'}</span><b>${s.exam_days_left!=null?s.exam_days_left:'—'} 天</b></div>
+   ${rankrow}
    <div class="ovrow"><span>🔥 连续打卡</span><b>${s.streak||0} 天</b></div>
-   <div class="ovrow"><span>📝 今日已做</span><b>${s.today_count||0} 题</b></div>
    <div class="ovrow"><span>📚 累计做题</span><b>${s.done||0} 题</b></div>
    <div class="ovrow"><span>✅ 总正确率</span><b>${s.accuracy==null?'—':s.accuracy+'%'}</b></div>
    <div class="ovrow"><span>📕 待复习错题</span><b>${s.wrong||0}</b></div>`;
  return `<div class="proj">
   <div class="proj-main">
    <div style="margin:2px 0 14px"><div class="serif" style="font-size:26px;font-weight:600">${greet},今天也要上岸 👋</div>
-    <div class="muted" style="margin-top:8px">我是你的行测 AI 助教 · 贴题分析考点 + 动态推荐对应题</div></div>
+    <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+     <span class="pill" id="online-pill">🟢 ${s.online||1} 人在线</span>
+     <span class="pill">${rk.icon||'🌱'} ${rk.name||'萌新上路'}</span>
+     <span class="pill">🔥 连续 ${s.streak||0} 天</span>
+     <span class="muted" style="font-size:12px">上传 PDF 攒题库,想练什么直接说</span></div>
+    ${goalbar}</div>
    <div class="hcard">
      <div class="chatlog" id="chatlog"></div>
-     <div class="chatbox"><textarea id="chatin" placeholder="贴一道题让我分析考点+找相似题,或问我任何行测问题…(Enter 发送)"></textarea>
+     <div class="chatbox"><textarea id="chatin" placeholder="想练什么直接说,比如「来5道图形推理」;或贴一道题让我分析考点…(Enter 发送)"></textarea>
       <div style="display:flex;flex-direction:column;gap:6px"><button class="btn" onclick="aiSend()">发送</button><button class="btn gray sm" onclick="aiSaveMine()">📤 存我的库</button></div></div>
      <div class="ana" id="suglist" style="margin-top:12px">${sug.map(t=>`<span class="chip" onclick="suggest('${t}')">${t}</span>`).join('')}</div>
-   </div>${up}
+   </div>
   </div>
   <aside class="proj-side">
    <div id="artifact"></div>
@@ -297,16 +485,38 @@ V.home=async()=>{AI_HIST=[];let s={},mine={count:0,items:[]};
   </aside>
  </div>`;};
 function minePanel(mine,s){
- const isM=s.is_member;const cap=isM?3000:50;const pct=Math.min(100,Math.round(mine.count/cap*100));
- let h=`<div style="display:flex;justify-content:space-between;align-items:center"><b>📚 我的题库</b><button class="btn sm ghost" onclick="$('#chatin')&&$('#chatin').focus()">+ 上传</button></div>`;
- h+=`<div style="margin-top:8px;font-size:13px">已上传 <b style="font-size:18px;color:var(--blue)">${mine.count}</b> 题 <span class="muted">/ ${isM?'不限':cap}</span></div>`;
+ const cap=mine.cap||300;const pct=Math.min(100,Math.round(mine.count/cap*100));
+ let h=`<div style="display:flex;justify-content:space-between;align-items:center"><b>📚 我的题库</b><label class="btn sm ghost" style="cursor:pointer">📄 传PDF<input type="file" accept=".pdf" style="display:none" onchange="mineUploadPDF(this)"></label></div>`;
+ h+=`<div style="margin-top:8px;font-size:13px">已入库 <b style="font-size:18px;color:var(--blue)">${mine.count}</b> 题 <span class="muted">/ ${cap}</span></div>`;
  h+=`<div class="cap"><i style="width:${pct}%"></i></div>`;
- h+=`<div class="muted" style="font-size:11px;margin-bottom:6px">${isM?'会员私有库':'免费版上限'+cap+'题,会员可扩容'}</div>`;
- if(!mine.count){h+=`<div class="mine-empty">还没上传题目<br>在左侧贴一道题,点「📤 存我的库」即可收藏到这里</div>`;}
+ const cats=Object.entries(mine.by_category||{}).sort((a,b)=>b[1]-a[1]);
+ if(cats.length)h+=`<div style="margin:8px 0 4px">${cats.slice(0,6).map(([k,n])=>`<span class="chip" onclick="suggest('来几道${k}题')">${k} ${n}</span>`).join('')}</div>`;
+ h+=`<div id="upjob" class="upjob"></div>`;
+ if(!mine.count){h+=`<div class="mine-empty">题库还是空的<br><b>上传一份真题 PDF</b>,AI 自动切题入库<br>或在左侧贴一道题,点「📤 存我的库」</div>`;}
  else{for(const q of mine.items.slice(0,30))h+=`<div class="mine-it" onclick="askMine(${q.id})"><span class="mtag">${esc(q.category_l2||q.category_l1||'题')}</span><span>${esc((q.content||'').replace(/\s+/g,'').slice(0,26))}…</span></div>`;}
  return h;
 }
 async function refreshMine(){let mine={count:0,items:[]},s={};try{mine=await j('/api/mine/list');}catch(e){}try{s=await j('/api/stats');}catch(e){}const p=$('#minepanel');if(p)p.innerHTML=minePanel(mine,s);}
+/* 用户 PDF 上传 → 私有题库 */
+async function mineUploadPDF(inp){
+ const f=inp.files[0];if(!f)return;inp.value='';
+ if(!/\.pdf$/i.test(f.name)){toast('仅支持 PDF');return;}
+ toast('上传中…');
+ const fd=new FormData();fd.append('file',f);
+ let r;try{r=await j('/api/mine/upload-pdf',{method:'POST',body:fd});}catch(e){toast('上传失败:'+e);return;}
+ if(r.detail){toast(r.detail);return;}
+ toast('开始解析,AI 切题中…');pollMineJob(r.job_id);
+}
+async function pollMineJob(id){
+ let r;try{r=await j('/api/mine/job/'+id);}catch(e){return;}
+ const el=$('#upjob');
+ const st=['排队中','AI 解析中','切题入库中','✅ 完成','❌ 失败'][r.status]||'';
+ if(el)el.innerHTML=r.status<3
+   ?`📄 ${esc(r.file_name)} · ${st}<div class="cap"><i style="width:${r.progress}%"></i></div>已入 ${r.done} 题${r.dup?` · 去重 ${r.dup}`:''}`
+   :(r.status===3?`📄 ${esc(r.file_name)} · ${st} 共入库 ${r.done} 题`:`📄 ${st}:${esc(r.error||'')}`);
+ if(r.status<3){setTimeout(()=>pollMineJob(id),2000);}
+ else{toast(r.status===3?`入库完成,共 ${r.done} 题`:'解析失败');refreshMine();}
+}
 async function askMine(id){bubble('me','🔍 找与我上传的这道题相似的题');const wait=bubble('ai','检索中…');
  try{const r=await j('/api/practice/similar/'+id);
    if(r.detail){wait.innerHTML='💎 '+r.detail;return;}
@@ -315,7 +525,6 @@ async function askMine(id){bubble('me','🔍 找与我上传的这道题相似�
    const box=document.createElement('div');box.innerHTML=r.items.map(q=>qCard(q,{answer:true})).join('');$('#chatlog').appendChild(box);$('#chatlog').scrollTop=$('#chatlog').scrollHeight;renderArtifact(r.items);
  }catch(e){wait.innerHTML='出错:'+e;}}
 function suggest(t){const inp=$('#chatin');if(!inp)return;inp.value=t;aiSend();}
-/* 右侧 artifact:把对话推荐的题整理成可下载 PDF(类 Claude artifact) */
 let LAST_ITEMS=[];
 function renderArtifact(items){const el=$('#artifact');if(!el)return;
  if(!items||!items.length){return;}LAST_ITEMS=items;
@@ -323,7 +532,7 @@ function renderArtifact(items){const el=$('#artifact');if(!el)return;
   <div class="muted" style="font-size:12px;margin-bottom:8px">AI 为你整理 · 可下载成 PDF 打印练习</div>
   <button class="btn sm" style="width:100%" onclick="exportPDF()">⬇ 下载 PDF(含答案页)</button>
   <div style="margin-top:8px">`;
- for(const q of items)h+=`<div class="art-it">${esc((q.content||'').replace(/\s+/g,'').slice(0,28))}…</div>`;
+ for(const q of items)h+=`<div class="art-it">${q.mine?'📤 ':''}${esc((q.content||'').replace(/\s+/g,'').slice(0,28))}…</div>`;
  el.innerHTML=h+'</div></div>';}
 async function exportPDF(){if(!LAST_ITEMS.length){toast('没有可下载的题');return;}
  toast('正在生成 PDF…');
@@ -340,7 +549,9 @@ async function aiSend(){const inp=$('#chatin');const msg=inp.value.trim();if(!ms
    let h=esc(r.reply||'');AI_HIST.push({role:'assistant',content:r.reply||''});
    if(r.analysis&&r.analysis.l1){h+='<div class="ana">'+[r.analysis.l1,r.analysis.l2,r.analysis.l3,r.analysis.kp].filter(Boolean).map(x=>`<span class="tag">${esc(x)}</span>`).join('')+'</div>';}
    wait.innerHTML=h;
-   if(r.items&&r.items.length){const box=document.createElement('div');box.innerHTML='<div class="muted" style="margin:8px 0 2px">📎 为你推荐 '+r.items.length+' 道对应的题(右侧可下载 PDF):</div>'+r.items.map(q=>qCard(q,{answer:true})).join('');$('#chatlog').appendChild(box);$('#chatlog').scrollTop=$('#chatlog').scrollHeight;renderArtifact(r.items);}
+   if(r.items&&r.items.length){const nMine=r.items.filter(q=>q.mine).length;
+     const tip=nMine?`📎 为你推荐 ${r.items.length} 道题,其中 <b>${nMine} 道来自你上传的题库</b>:`:`📎 为你推荐 ${r.items.length} 道对应的题(右侧可下载 PDF):`;
+     const box=document.createElement('div');box.innerHTML=`<div class="muted" style="margin:8px 0 2px">${tip}</div>`+r.items.map(q=>qCard(q,{answer:true})).join('');$('#chatlog').appendChild(box);$('#chatlog').scrollTop=$('#chatlog').scrollHeight;renderArtifact(r.items);}
  }catch(e){wait.innerHTML='出错了:'+e;}}
 async function aiSaveMine(){const inp=$('#chatin');const c=inp.value.trim();if(c.length<8){toast('请先粘贴一道完整的题');return;}
  inp.value='';bubble('me','📤 上传我的题:<br>'+esc(c).slice(0,80)+'…');const wait=bubble('ai','分析入库中…');
@@ -381,9 +592,16 @@ V.stats=async()=>{const s=await j('/api/stats');const acc=s.accuracy==null?'—'
  if(!cats)cats='<div class="muted center">还没刷题,去刷题练习开始吧</div>';
  const mx=Math.max(1,...(s.trend||[]).map(t=>t.count));let tr='';
  for(const t of (s.trend||[]))tr+=`<div class="col"><div class="bk" style="height:${t.count/mx*72}px"></div><div class="dt">${t.date}</div></div>`;
+ const rk=s.rank||{};
+ const rankcard=`<div class="card" style="text-align:center">
+   <div style="font-size:40px;margin-top:4px">${rk.icon||'🌱'}</div>
+   <div class="serif" style="font-size:22px;font-weight:700;margin:4px 0">${rk.name||'萌新上路'}</div>
+   ${rk.next?`<div class="muted" style="font-size:12px">再做 <b style="color:var(--blue)">${rk.need}</b> 题升「${rk.next}」</div>
+   <div class="cap" style="max-width:220px;margin:8px auto 0"><i style="width:${rk.pct}%"></i></div>`:'<div class="muted" style="font-size:12px">已是最高段位 🎉</div>'}</div>`;
  return `<h2 class="page">学习数据</h2>
- <div class="grid g2">
-   <div class="card hero"><div class="sub">距 ${s.exam_name||'目标考试'} 还有</div><div class="days">${s.exam_days_left!=null?s.exam_days_left:'—'} <span style="font-size:18px">天</span></div><div class="sub">📅 坚持每天练,稳步上岸</div></div>
+ <div class="grid g3">
+   <div class="card hero" style="margin:0"><div class="sub">距 ${s.exam_name||'目标考试'} 还有</div><div class="days">${s.exam_days_left!=null?s.exam_days_left:'—'} <span style="font-size:18px">天</span></div><div class="sub">📅 坚持每天练,稳步上岸</div></div>
+   ${rankcard}
    <div class="grid g2" style="margin:0">
      <div class="stat"><div class="n gold">🔥 ${s.streak}</div><div class="l">连续打卡(天)</div></div>
      <div class="stat"><div class="n blue">${s.today_count}</div><div class="l">今日已做</div></div>
@@ -397,26 +615,33 @@ V.stats=async()=>{const s=await j('/api/stats');const acc=s.accuracy==null?'—'
    <div class="stat" style="cursor:pointer" onclick="go('wrong')"><div class="n bad">${s.wrong}</div><div class="l">错题待复习 →</div></div>
    <div class="stat" style="cursor:pointer" onclick="go('fav')"><div class="n gold">${s.favorite}</div><div class="l">收藏题 →</div></div>
    <div class="stat"><div class="n">${s.active_days}</div><div class="l">学习天数</div></div></div>`;};
-V.membership=async()=>{const r=await j('/api/membership/plans');let cards='';
- for(const p of r.plans){const hot=p.level===1?'hot':'';
-   cards+=`<div class="plan ${hot}"><h3>${p.name}</h3><div class="price">¥${p.price}<small>/${p.level===1?'月':'年'}</small></div>
-   <ul>${p.perks.map(x=>`<li>✓ ${x}</li>`).join('')}</ul>
-   <button class="btn gold" onclick="upgrade(${p.level})">${r.is_member?'续费':'开通'}</button></div>`;}
- const status=r.is_member?`<div class="card" style="background:#fff8ec">💎 你已是会员${r.expire?',到期 '+r.expire:''}。`+(r.beta_free?' (内测期全员免费体验)':'')+'</div>':'';
- const beta=r.beta_free?'<div class="card muted">🎁 内测期:所有会员功能现在<b>免费开放</b>,点开通即可体验完整权益。正式上线后将按下方价格收费。</div>':'';
- return `<h2 class="page">会员中心</h2>${status}${beta}<div class="grid g2">${cards}</div>`;};
-async function upgrade(level){const fd=new FormData();fd.append('level',level);
- const r=await j('/api/membership/upgrade',{method:'POST',body:fd});
- if(r.ok){USER=r.user;toast('开通成功！');render('membership');}else toast(r.detail||'失败');}
-
-V.admin=async()=>{setTimeout(()=>{loadPending();},0);
- return `<h2 class="page">题库管理 <span class="muted" style="font-size:13px">(管理员)</span></h2>
- <div class="card"><b>① 上传真题 PDF</b><div style="margin-top:10px"><input type="file" id="pdf" accept=".pdf"> <button class="btn" onclick="upload()">上传入库</button></div><div id="upmsg" class="muted" style="margin-top:8px"></div></div>
+V.admin=async()=>{setTimeout(()=>{loadPending();loadMetrics();},0);
+ return `<h2 class="page">运营管理 <span class="muted" style="font-size:13px">(管理员)</span></h2>
+ <div id="metrics"><div class="card muted center">统计加载中…</div></div>
+ <div class="card"><b>① 上传真题 PDF(公共题库)</b><div style="margin-top:10px"><input type="file" id="pdf" accept=".pdf"> <button class="btn" onclick="upload()">上传入库</button></div><div id="upmsg" class="muted" style="margin-top:8px"></div></div>
  <div class="card"><b>② 发布考试资讯</b><div style="margin-top:10px">
    <input id="nt" placeholder="标题" style="width:60%"> <select id="nc"><option>资讯</option><option>公告</option><option>考试时间</option></select><br>
    <input id="ns" placeholder="摘要/内容" style="width:80%;margin-top:6px"> <input id="nu" placeholder="原文链接(选填)" style="width:40%">
    <button class="btn" onclick="addNews()">发布</button></div></div>
  <div class="card"><b>③ 待确认题</b> <button class="btn sm ghost" onclick="loadPending()">刷新</button><div id="pending" style="margin-top:10px"></div></div>`;};
+function fmtNum(n){n=n||0;return n>=1e8?(n/1e8).toFixed(1)+'亿':n>=1e4?(n/1e4).toFixed(1)+'万':''+n;}
+async function loadMetrics(){let m;try{m=await j('/api/admin/metrics');}catch(e){return;}
+ if(m.detail){$('#metrics').innerHTML='';return;}
+ const t=m.today,tt=m.total;
+ const mx=Math.max(1,...m.trend.map(d=>d.chat));
+ const bars=m.trend.map(d=>`<div class="col" title="${d.day} 对话${d.chat} PV${d.pv}"><div class="bk" style="height:${d.chat/mx*72}px"></div><div class="dt">${d.day}</div></div>`).join('');
+ $('#metrics').innerHTML=`
+ <div class="grid g4">
+   <div class="stat"><div class="n ok">🟢 ${m.online}</div><div class="l">当前在线</div></div>
+   <div class="stat"><div class="n blue">${t.uv}</div><div class="l">今日活跃(UV) · PV ${t.pv}</div></div>
+   <div class="stat"><div class="n">${t.chat}</div><div class="l">今日对话 · 累计 ${fmtNum(tt.chat)}</div></div>
+   <div class="stat"><div class="n gold">¥${t.cost}</div><div class="l">今日成本 · 累计 ¥${tt.cost}</div></div></div>
+ <div class="grid g4">
+   <div class="stat"><div class="n">${tt.users}</div><div class="l">注册用户 · 今日 +${t.new_users}</div></div>
+   <div class="stat"><div class="n">${fmtNum(t.tokens_in+t.tokens_out)}</div><div class="l">今日 token · 累计 ${fmtNum(tt.tokens_in+tt.tokens_out)}</div></div>
+   <div class="stat"><div class="n blue">${fmtNum(m.bank.public)}</div><div class="l">公共题库</div></div>
+   <div class="stat"><div class="n">${fmtNum(m.bank.mine)}</div><div class="l">用户私库题 · 总做题 ${fmtNum(tt.practice)}</div></div></div>
+ <div class="card"><b>📈 近 14 天对话量</b><div class="trend">${bars}</div></div>`;}
 async function upload(){const f=$('#pdf').files[0];if(!f){toast('请选 PDF');return;}
  const fd=new FormData();fd.append('file',f);$('#upmsg').textContent='上传中…';
  const r=await j('/api/ingest/upload',{method:'POST',body:fd});if(r.detail){$('#upmsg').textContent='错误:'+r.detail;return;}pollJob(r.job_id);}
@@ -442,11 +667,13 @@ async function render(v){$('#main').innerHTML='<div class="card muted center">�
  try{$('#main').innerHTML=await V[v]();}catch(e){$('#main').innerHTML='<div class="card">加载失败:'+e+'</div>';}}
 function go(v){[...document.querySelectorAll('#nav a')].forEach(a=>a.classList.toggle('on',a.dataset.v===v));render(v);}
 document.addEventListener('click',e=>{if(e.target.matches('.q img'))e.target.classList.toggle('zoom');});
-document.addEventListener('keydown',e=>{if(e.target.id==='chatin'&&e.key==='Enter'&&!e.shiftKey){e.preventDefault();aiSend();}});
+document.addEventListener('keydown',e=>{
+ if(e.target.id==='chatin'&&e.key==='Enter'&&!e.shiftKey){e.preventDefault();aiSend();}
+ if(e.key==='Escape')closeAuth();});
 $('#g-pass').addEventListener('keydown',e=>{if(e.key==='Enter')doAuth();});
 
-/* 启动 */
-if(TOKEN)boot();
+/* 启动:有 token 直接进应用,否则展示落地页 */
+if(TOKEN){boot();}else{showLanding();}
 </script>
 </body>
 </html>

@@ -13,6 +13,8 @@ from fastapi import (FastAPI, UploadFile, File, BackgroundTasks, HTTPException,
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response
 
+from sqlalchemy import func
+
 import config
 import ingest
 import vectors
@@ -20,11 +22,12 @@ import textutil
 import auth
 import ai
 import pdfgen
+import stats as opstats
 from db import (init_db, SessionLocal, IngestionJob, Question, QuestionImage,
                 PracticeRecord, WrongBook, MaterialGroup, Favorite, User, News,
-                AiUsage)
+                AiUsage, StatDaily, VisitDay)
 
-app = FastAPI(title="行测智能题库 API", version="1.0")
+app = FastAPI(title="行测智能题库 API", version="2.0")
 init_db()
 
 
@@ -42,13 +45,6 @@ app.mount("/img", StaticFiles(directory=config.IMAGE_DIR), name="img")
 
 
 # ============ 工具 ============
-def _member_active(u: User) -> bool:
-    if config.BETA_FREE:
-        return True            # 内测期:全员视为会员
-    return (u.membership_level > 0 and u.membership_expire
-            and u.membership_expire > datetime.now())
-
-
 def _q_to_vo(q: Question, db, with_answer=False, user_id=0):
     imgs = db.query(QuestionImage).filter(QuestionImage.question_id == q.id).all()
     image_urls = [f"/img/{i.object_key}".replace("\\", "/") for i in imgs]
@@ -61,6 +57,7 @@ def _q_to_vo(q: Question, db, with_answer=False, user_id=0):
         "content": textutil.clean_text(q.content),
         "has_image": q.has_image, "confidence": q.confidence,
         "status": q.status, "favorited": faved,
+        "mine": q.scope.startswith("user:"),
         "material_text": "", "material_images": [], "images": image_urls,
     }
     if q.material_id:
@@ -97,10 +94,28 @@ def _ai_guard(u: User):
 
 def _user_vo(u: User):
     return {"id": u.id, "username": u.username, "nickname": u.nickname or u.username,
-            "role": u.role, "membership_level": u.membership_level,
-            "membership_expire": u.membership_expire.strftime("%Y-%m-%d")
-            if u.membership_expire else None,
-            "is_member": _member_active(u), "beta_free": config.BETA_FREE}
+            "role": u.role}
+
+
+# 段位体系(留存:做题越多段位越高,零成本纯计算)
+RANKS = [(0, "萌新上路", "🌱"), (50, "童生", "📖"), (200, "秀才", "✒️"),
+         (500, "举人", "🏮"), (1000, "贡士", "🎓"), (2000, "进士", "🏆"),
+         (3500, "翰林", "👑"), (5000, "状元", "🐉"), (8000, "上岸在望", "⛵")]
+
+
+def _rank_of(done: int):
+    cur = RANKS[0]
+    nxt = None
+    for r in RANKS:
+        if done >= r[0]:
+            cur = r
+        elif nxt is None:
+            nxt = r
+    if nxt is None:
+        return {"name": cur[1], "icon": cur[2], "next": None, "need": 0, "pct": 100}
+    span = nxt[0] - cur[0]
+    return {"name": cur[1], "icon": cur[2], "next": nxt[1],
+            "need": nxt[0] - done, "pct": round((done - cur[0]) / span * 100)}
 
 
 # ============ 认证 ============
@@ -261,10 +276,6 @@ def submit(question_id: int = Form(...), user_answer: str = Form(...),
 
 @app.get("/api/practice/similar/{question_id}")
 def similar(question_id: int, k: int = 5, u: User = Depends(auth.current_user)):
-    # 找相似=AI能力,定位为会员权益。内测期(BETA_FREE)全开放;
-    # 正式收费后,非会员在此返回 402 引导升级(每日免费额度可另加计数表)。
-    if not config.BETA_FREE and not _member_active(u):
-        raise HTTPException(402, "「找相似题」是会员功能,开通会员即可无限使用")
     db = SessionLocal()
     q = db.get(Question, question_id)
     if not q:
@@ -297,23 +308,62 @@ def _vec_recommend(db, summary_or_text, uid, k=6, exclude=None):
     return out
 
 
+def _mine_first_recommend(db, c, msg, uid, k=6):
+    """推荐题目:优先从用户自己上传的私有题库里按题型精确调取,
+    再用向量检索补足(私库+公共库)。这是「上传PDF→对话调题」闭环的核心。"""
+    mine_scope = f"user:{uid}"
+    picked, seen = [], set()
+    # 1) 私库按分类直查(l2 优先,其次 l1)——用户问"图形推理"就先给他自己传的图形推理
+    qy = db.query(Question).filter(Question.scope == mine_scope, Question.status == 1)
+    if c.get("l2"):
+        mine_qs = qy.filter(Question.category_l2 == c["l2"]).limit(k).all()
+    elif c.get("l1"):
+        mine_qs = qy.filter(Question.category_l1 == c["l1"]).limit(k).all()
+    else:
+        mine_qs = []
+    random.shuffle(mine_qs)
+    for q in mine_qs[:max(2, k // 2)]:
+        vo = _q_to_vo(q, db, user_id=uid)
+        vo["match"] = 1.0
+        picked.append(vo)
+        seen.add(q.id)
+    # 2) 向量检索补足(覆盖私库+公共库,自然按相似度排)
+    hits = vectors.search(c.get("summary") or msg, ["public", mine_scope], k=k + len(seen))
+    for qid, dist in hits:
+        if qid in seen or len(picked) >= k:
+            continue
+        sq = db.get(Question, qid)
+        if sq and sq.status == 1:
+            vo = _q_to_vo(sq, db, user_id=uid)
+            vo["match"] = round(max(0.0, 1 - dist), 3)
+            picked.append(vo)
+            seen.add(qid)
+    return picked
+
+
 @app.post("/api/ai/ask")
 def ai_ask(payload: dict = Body(...), u: User = Depends(auth.current_user)):
-    """和 AI 对话 + 按你说的内容/贴的题,自动分析考点并推荐对应的题(动态,非固定)。"""
+    """和 AI 对话 + 按你说的内容/贴的题,自动分析考点并推荐对应的题(动态,非固定)。
+    推荐优先调用户自己上传的题(私有题库),不够再从公共库补。"""
     msg = (payload.get("message") or "").strip()
     if not msg:
         raise HTTPException(400, "请输入内容")
     _ai_guard(u)
+    opstats.record_chat()
     history = payload.get("history") or []
     reply = ai.chat(msg, history)
     analysis, items = {}, []
     try:
-        c = ai.classify(msg)
-        analysis = {"l1": c["l1"], "l2": c["l2"], "l3": c.get("l3", ""),
-                    "kp": c["kp"], "summary": c["summary"]}
-        db = SessionLocal()
-        items = _vec_recommend(db, c["summary"] or msg, u.id, k=6)
-        db.close()
+        # 省钱三段式:词表秒分类(免费) → 贴题才调 LLM → 闲聊不分析不推荐
+        c = ai.quick_classify(msg)
+        if not c and len(msg) > 60:
+            c = ai.classify(msg)
+        if c:
+            analysis = {"l1": c["l1"], "l2": c["l2"], "l3": c.get("l3", ""),
+                        "kp": c["kp"], "summary": c["summary"]}
+            db = SessionLocal()
+            items = _mine_first_recommend(db, c, msg, u.id, k=6)
+            db.close()
     except Exception:
         pass
     return {"reply": reply, "analysis": analysis, "items": items}
@@ -377,14 +427,89 @@ def export_pdf(question_ids: list[int] = Body(...), u: User = Depends(auth.curre
                     headers={"Content-Disposition": 'attachment; filename="xingce.pdf"'})
 
 
+@app.post("/api/mine/upload-pdf")
+async def mine_upload_pdf(background: BackgroundTasks, file: UploadFile = File(...),
+                          u: User = Depends(auth.current_user)):
+    """用户上传整份 PDF → AI 切题/分类/抠图 → 全部进个人私有题库。
+    之后在 AI 对话里问某类题,系统会优先从这里调取。"""
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "仅支持 PDF 文件")
+    cap = config.MINE_CAP
+    db = SessionLocal()
+    mine_count = db.query(Question).filter(Question.scope == f"user:{u.id}",
+                                           Question.status == 1).count()
+    running = db.query(IngestionJob).filter(IngestionJob.user_id == u.id,
+                                            IngestionJob.status.in_([0, 1, 2])).count()
+    today0 = datetime.combine(date.today(), datetime.min.time())
+    today_jobs = db.query(IngestionJob).filter(IngestionJob.user_id == u.id,
+                                               IngestionJob.created_at >= today0).count()
+    db.close()
+    if mine_count >= cap:
+        raise HTTPException(402, f"私有题库已达上限({cap}题),可在「我的题库」清理后再传")
+    if running:
+        raise HTTPException(409, "你有一份 PDF 正在解析中,完成后再传下一份")
+    if today_jobs >= config.MINE_PDF_DAILY:
+        raise HTTPException(429, f"今天已传 {config.MINE_PDF_DAILY} 份,明天再来吧(解析很烧算力)")
+    save = os.path.join(config.PDF_DIR, f"u{u.id}_{uuid.uuid4().hex}.pdf")
+    size = 0
+    with open(save, "wb") as f:
+        while chunk := await file.read(1024 * 1024):
+            size += len(chunk)
+            if size > config.MINE_PDF_MAX_MB * 1024 * 1024:
+                f.close()
+                os.remove(save)
+                raise HTTPException(413, f"文件超过 {config.MINE_PDF_MAX_MB}MB")
+            f.write(chunk)
+    db = SessionLocal()
+    job = IngestionJob(user_id=u.id, file_name=file.filename, file_path=save,
+                       scope=f"user:{u.id}", status=0)
+    db.add(job)
+    db.commit()
+    jid = job.id
+    db.close()
+    background.add_task(ingest.run, jid)
+    return {"job_id": jid}
+
+
+@app.get("/api/mine/job/{job_id}")
+def mine_job_status(job_id: int, u: User = Depends(auth.current_user)):
+    db = SessionLocal()
+    job = db.get(IngestionJob, job_id)
+    db.close()
+    if not job or job.user_id != u.id:
+        raise HTTPException(404, "任务不存在")
+    return {"id": job.id, "file_name": job.file_name, "status": job.status,
+            "progress": job.progress, "total": job.total_count,
+            "done": job.done_count, "dup": job.dup_count, "error": job.error_msg}
+
+
+@app.post("/api/mine/delete")
+def mine_delete(question_id: int = Form(...), u: User = Depends(auth.current_user)):
+    db = SessionLocal()
+    q = db.get(Question, question_id)
+    if not q or q.scope != f"user:{u.id}":
+        db.close()
+        raise HTTPException(404, "题不存在或不属于你")
+    q.status = 2
+    db.commit()
+    db.close()
+    vectors.delete(question_id)
+    return {"ok": True}
+
+
 @app.get("/api/mine/list")
 def mine_list(u: User = Depends(auth.current_user)):
     db = SessionLocal()
     qs = db.query(Question).filter(Question.scope == f"user:{u.id}",
                                    Question.status == 1).order_by(Question.id.desc()).all()
     out = [_q_to_vo(q, db, with_answer=True, user_id=u.id) for q in qs]
+    # 各题型分布(对话调题时给用户感知:他的库里有什么)
+    by_cat = {}
+    for q in qs:
+        key = q.category_l2 or q.category_l1 or "其他"
+        by_cat[key] = by_cat.get(key, 0) + 1
     db.close()
-    return {"count": len(out), "items": out}
+    return {"count": len(out), "cap": config.MINE_CAP, "by_category": by_cat, "items": out}
 
 
 # ============ 错题本/收藏(登录用户) ============
@@ -497,37 +622,65 @@ def stats(u: User = Depends(auth.current_user)):
             "today_count": today_count, "active_days": len(day_set),
             "trend": trend, "by_category": cats,
             "exam_name": config.EXAM_NAME, "exam_days_left": days_left,
-            "is_member": _member_active(u)}
+            "daily_goal": config.DAILY_GOAL, "rank": _rank_of(len(recs)),
+            "online": opstats.online_count()}
 
 
-# ============ 会员/变现 ============
-@app.get("/api/membership/plans")
-def plans(u: User = Depends(auth.current_user)):
-    return {"beta_free": config.BETA_FREE, "is_member": _member_active(u),
-            "level": u.membership_level,
-            "expire": u.membership_expire.strftime("%Y-%m-%d") if u.membership_expire else None,
-            "plans": config.MEMBERSHIP_PLANS}
+# ============ 运营统计 ============
+@app.get("/api/online")
+def online(u: User = Depends(auth.current_user)):
+    """在线人数(5分钟内活跃)。所有登录用户可见,也是前端的心跳接口。"""
+    return {"online": opstats.online_count()}
 
 
-@app.post("/api/membership/upgrade")
-def upgrade(level: int = Form(...), u: User = Depends(auth.current_user)):
-    """开通会员。⚠️ 真实支付需接微信/支付宝商户(见 README)。
-    此处为占位:内测期直接开通,便于体验权益与转化路径。"""
-    plan = next((p for p in config.MEMBERSHIP_PLANS if p["level"] == level), None)
-    if not plan:
-        raise HTTPException(400, "无效的会员档位")
+@app.post("/api/track/visit")
+def track_visit(u: User = Depends(auth.optional_user)):
+    """页面打开埋点:落地页/应用启动各调一次。未登录只记 PV。"""
+    opstats.record_visit(u.id if u else 0)
+    return {"ok": True}
+
+
+@app.get("/api/admin/metrics")
+def admin_metrics(admin: User = Depends(auth.require_admin)):
+    """运营面板(仅管理员):人数/人次/对话/token/成本/题库规模 + 近14天趋势。"""
     db = SessionLocal()
-    user = db.get(User, u.id)
-    base = user.membership_expire if (user.membership_expire
-                                      and user.membership_expire > datetime.now()) \
-        else datetime.now()
-    user.membership_level = level
-    user.membership_expire = base + timedelta(days=plan["days"])
-    db.commit()
-    vo = _user_vo(user)
+    today = date.today().strftime("%Y-%m-%d")
+    t = db.query(StatDaily).filter(StatDaily.day == today).first()
+    tot = db.query(func.coalesce(func.sum(StatDaily.pv), 0),
+                   func.coalesce(func.sum(StatDaily.chat_count), 0),
+                   func.coalesce(func.sum(StatDaily.tokens_in), 0),
+                   func.coalesce(func.sum(StatDaily.tokens_out), 0)).first()
+    users = db.query(User).count()
+    new_today = db.query(User).filter(
+        User.created_at >= datetime.combine(date.today(), datetime.min.time())).count()
+    uv_today = db.query(VisitDay).filter(VisitDay.day == today).count()
+    q_pub = db.query(Question).filter(Question.status == 1,
+                                      Question.scope == "public").count()
+    q_mine = db.query(Question).filter(Question.status == 1,
+                                       Question.scope != "public").count()
+    practice_total = db.query(PracticeRecord).count()
+    trend = [{"day": r.day[5:], "pv": r.pv, "chat": r.chat_count,
+              "tokens": r.tokens_in + r.tokens_out}
+             for r in db.query(StatDaily).order_by(StatDaily.day.desc()).limit(14).all()][::-1]
     db.close()
-    return {"ok": True, "user": vo,
-            "note": "内测期直接开通;正式上线请在此处对接支付回调后再发放会员。"}
+
+    def _cost(tin, tout):
+        return round((tin * config.PRICE_IN_PER_M + tout * config.PRICE_OUT_PER_M) / 1e6, 2)
+
+    return {
+        "online": opstats.online_count(),
+        "today": {"pv": t.pv if t else 0, "uv": uv_today,
+                  "chat": t.chat_count if t else 0,
+                  "tokens_in": t.tokens_in if t else 0,
+                  "tokens_out": t.tokens_out if t else 0,
+                  "cost": _cost(t.tokens_in if t else 0, t.tokens_out if t else 0),
+                  "new_users": new_today},
+        "total": {"pv": tot[0], "chat": tot[1], "tokens_in": tot[2],
+                  "tokens_out": tot[3], "cost": _cost(tot[2], tot[3]),
+                  "users": users, "practice": practice_total},
+        "bank": {"public": q_pub, "mine": q_mine},
+        "trend": trend,
+    }
 
 
 # ============ 资讯/公告 ============
@@ -571,8 +724,7 @@ def news_del(nid: int, admin: User = Depends(auth.require_admin)):
 # ============ 健康检查(部署用) ============
 @app.get("/api/health")
 def health():
-    return {"ok": True, "beta_free": config.BETA_FREE,
-            "secret_default": config.SECRET_IS_DEFAULT}
+    return {"ok": True, "secret_default": config.SECRET_IS_DEFAULT}
 
 
 # 前端页面(SPA)
