@@ -41,6 +41,7 @@ class IngestionJob(Base):
     done_count: Mapped[int] = mapped_column(Integer, default=0)
     dup_count: Mapped[int] = mapped_column(Integer, default=0)
     graphic_count: Mapped[int] = mapped_column(Integer, default=0)
+    missing_nums: Mapped[str] = mapped_column(String(255), default="")  # 切题缺号报告
     error_msg: Mapped[str] = mapped_column(String(1024), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -89,6 +90,7 @@ class Question(Base):
     difficulty: Mapped[int] = mapped_column(Integer, default=2)  # 1易2中3难
     content: Mapped[str] = mapped_column(Text)
     answer: Mapped[str] = mapped_column(String(64), default="")
+    answer_origin: Mapped[str] = mapped_column(String(8), default="")  # official/ai/空
     explanation: Mapped[str] = mapped_column(Text, default="")
     has_image: Mapped[int] = mapped_column(Integer, default=0)
     vector_id: Mapped[str] = mapped_column(String(64), default="")
@@ -116,17 +118,36 @@ class PracticeRecord(Base):
     question_id: Mapped[int] = mapped_column(Integer, index=True)
     user_answer: Mapped[str] = mapped_column(String(64), default="")
     is_correct: Mapped[int] = mapped_column(Integer, default=0)
+    time_ms: Mapped[int] = mapped_column(Integer, default=0)   # 本题用时(毫秒,0=未记)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class MockExam(Base):
+    """整卷模考记录(限时模拟+交卷出分)"""
+    __tablename__ = "mock_exam"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    paper_id: Mapped[int] = mapped_column(Integer, index=True)
+    time_limit_min: Mapped[int] = mapped_column(Integer, default=120)
+    submitted: Mapped[int] = mapped_column(Integer, default=0)
+    total: Mapped[int] = mapped_column(Integer, default=0)       # 卷面题数
+    answered: Mapped[int] = mapped_column(Integer, default=0)
+    correct: Mapped[int] = mapped_column(Integer, default=0)
+    time_used_sec: Mapped[int] = mapped_column(Integer, default=0)
+    report: Mapped[str] = mapped_column(Text, default="")        # 分模块统计(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class WrongBook(Base):
-    """错题本"""
+    """错题本(带间隔重复:做对一次进下一档 1/3/7/15 天,四档全过自动掌握)"""
     __tablename__ = "wrong_book"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, default=1, index=True)
     question_id: Mapped[int] = mapped_column(Integer, index=True)
     wrong_count: Mapped[int] = mapped_column(Integer, default=1)
     mastered: Mapped[int] = mapped_column(Integer, default=0)
+    box: Mapped[int] = mapped_column(Integer, default=0)           # 复习档位
+    next_review: Mapped[str] = mapped_column(String(10), default="")  # YYYY-MM-DD
 
 
 class Favorite(Base):
@@ -192,6 +213,7 @@ class AiChannel(Base):
     model: Mapped[str] = mapped_column(String(128))              # 如 deepseek-chat
     enabled: Mapped[int] = mapped_column(Integer, default=1)
     priority: Mapped[int] = mapped_column(Integer, default=10)   # 小的先用
+    supports_vision: Mapped[int] = mapped_column(Integer, default=0)  # 1=能看图(OCR/图形题)
     fail_count: Mapped[int] = mapped_column(Integer, default=0)  # 累计失败(监控用)
     last_error: Mapped[str] = mapped_column(String(255), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

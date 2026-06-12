@@ -4,6 +4,7 @@
 """
 import os
 import re
+import json
 import uuid
 import random
 from datetime import date, datetime, timedelta
@@ -27,7 +28,7 @@ import security
 from db import (init_db, SessionLocal, IngestionJob, Question, QuestionImage,
                 PracticeRecord, WrongBook, MaterialGroup, Favorite, User, News,
                 AiUsage, StatDaily, VisitDay, LoginLog, Setting, AuditLog, AiChannel,
-                Paper, InviteCode, ExamInfo)
+                Paper, InviteCode, ExamInfo, MockExam)
 import exams
 
 # ---- 错误日志:轮转文件,排障不靠猜(稳定性) ----
@@ -168,6 +169,7 @@ def _q_to_vo(q: Question, db, with_answer=False, user_id=0):
                                      for k in mg.image_keys.split("|") if k]
     if with_answer:
         vo["answer"] = q.answer
+        vo["answer_origin"] = q.answer_origin
         vo["explanation"] = q.explanation
     return vo
 
@@ -195,6 +197,35 @@ def _ai_guard(u: User):
 def _user_vo(u: User):
     return {"id": u.id, "username": u.username, "nickname": u.nickname or u.username,
             "role": u.role}
+
+
+# 错题间隔重复:做对一次升档,档位间隔 1/3/7/15 天,全过自动标掌握
+_REVIEW_GAPS = [1, 3, 7, 15]
+
+
+def _update_wrongbook(db, uid: int, qid: int, correct):
+    """correct: True/False/None(未判分)。错→进错题本明天复习;对→升档。"""
+    if correct is None:
+        return
+    wb = db.query(WrongBook).filter(WrongBook.user_id == uid,
+                                    WrongBook.question_id == qid).first()
+    if correct is False:
+        if wb:
+            wb.wrong_count += 1
+            wb.mastered = 0
+            wb.box = 0
+        else:
+            wb = WrongBook(user_id=uid, question_id=qid, box=0)
+            db.add(wb)
+        wb.next_review = (date.today() + timedelta(days=1)).strftime("%Y-%m-%d")
+    elif wb and not wb.mastered:
+        wb.box = (wb.box or 0) + 1
+        if wb.box >= len(_REVIEW_GAPS):
+            wb.mastered = 1
+            wb.next_review = ""
+        else:
+            wb.next_review = (date.today() + timedelta(
+                days=_REVIEW_GAPS[wb.box])).strftime("%Y-%m-%d")
 
 
 # 段位体系(留存:做题越多段位越高,零成本纯计算)
@@ -394,7 +425,8 @@ def job_status(job_id: int, admin: User = Depends(auth.require_admin)):
     return {"id": job.id, "file_name": job.file_name, "status": job.status,
             "progress": job.progress, "total": job.total_count,
             "done": job.done_count, "dup": job.dup_count,
-            "graphic": job.graphic_count, "error": job.error_msg}
+            "graphic": job.graphic_count, "missing": job.missing_nums,
+            "error": job.error_msg}
 
 
 # ============ 审核(管理员) ============
@@ -428,7 +460,7 @@ def review_confirm(question_ids: list[int] = Body(...), approve: bool = True,
 
 # ============ 出题/做题(登录用户) ============
 @app.get("/api/practice/questions")
-def serve(l1: str = "", l2: str = "", difficulty: int = 0, limit: int = 10,
+def serve(l1: str = "", l2: str = "", kp: str = "", difficulty: int = 0, limit: int = 10,
           exclude_done: bool = True, u: User = Depends(auth.current_user)):
     uid = u.id
     db = SessionLocal()
@@ -438,6 +470,8 @@ def serve(l1: str = "", l2: str = "", difficulty: int = 0, limit: int = 10,
         qy = qy.filter(Question.category_l1 == l1)
     if l2:
         qy = qy.filter(Question.category_l2 == l2)
+    if kp:
+        qy = qy.filter(Question.knowledge_point == kp)
     if difficulty:
         qy = qy.filter(Question.difficulty == difficulty)
     if exclude_done:
@@ -454,7 +488,7 @@ def serve(l1: str = "", l2: str = "", difficulty: int = 0, limit: int = 10,
 
 @app.post("/api/practice/submit")
 def submit(question_id: int = Form(...), user_answer: str = Form(...),
-           u: User = Depends(auth.current_user)):
+           time_ms: int = Form(0), u: User = Depends(auth.current_user)):
     uid = u.id
     db = SessionLocal()
     q = db.get(Question, question_id)
@@ -464,19 +498,59 @@ def submit(question_id: int = Form(...), user_answer: str = Form(...),
     has_ans = bool((q.answer or "").strip())
     correct = (user_answer.strip().upper() == q.answer.strip().upper()) if has_ans else None
     db.add(PracticeRecord(user_id=uid, question_id=question_id, user_answer=user_answer,
+                          time_ms=max(0, min(time_ms, 30 * 60 * 1000)),
                           is_correct=1 if correct else (0 if correct is False else -1)))
-    if correct is False:
-        wb = db.query(WrongBook).filter(WrongBook.user_id == uid,
-                                        WrongBook.question_id == question_id).first()
-        if wb:
-            wb.wrong_count += 1
-            wb.mastered = 0
-        else:
-            db.add(WrongBook(user_id=uid, question_id=question_id))
+    _update_wrongbook(db, uid, question_id, correct)
     db.commit()
-    ans, exp = q.answer, q.explanation
+    ans, exp, origin = q.answer, q.explanation, q.answer_origin
     db.close()
-    return {"correct": correct, "has_answer": has_ans, "answer": ans, "explanation": exp}
+    return {"correct": correct, "has_answer": has_ans, "answer": ans,
+            "explanation": exp, "answer_origin": origin}
+
+
+@app.post("/api/questions/{qid}/ai-answer")
+def ai_answer(qid: int, u: User = Depends(auth.current_user)):
+    """无答案的题让 AI 生成答案+解析(标 origin=ai,生成一次全员共享)。"""
+    db = SessionLocal()
+    q = db.get(Question, qid)
+    if not q or q.status != 1 or \
+            (q.scope != "public" and q.scope != f"user:{u.id}"):
+        db.close()
+        raise HTTPException(404, "题不存在")
+    if (q.answer or "").strip() and q.answer_origin != "ai":
+        db.close()
+        raise HTTPException(409, "本题已有官方答案")
+    if (q.answer or "").strip() and q.answer_origin == "ai":
+        ans, exp = q.answer, q.explanation     # 已生成过,直接复用(不重复烧钱)
+        db.close()
+        return {"answer": ans, "explanation": exp, "origin": "ai", "cached": True}
+    material = ""
+    if q.material_id:
+        mg = db.get(MaterialGroup, q.material_id)
+        material = mg.material_text if mg else ""
+    content, mid = q.content, q.id
+    db.close()
+    _ai_guard(u)
+    r = ai.solve(content, material)
+    if not r["answer"]:
+        raise HTTPException(422, "AI 无法确定本题答案(图形题/信息不足),建议上传官方答案")
+    db = SessionLocal()
+    q = db.get(Question, mid)
+    q.answer = r["answer"]
+    q.answer_origin = "ai"
+    if r["explanation"] and not (q.explanation or "").strip():
+        q.explanation = r["explanation"]
+    if q.paper_id:
+        db.flush()
+        p = db.get(Paper, q.paper_id)
+        if p:
+            p.answer_count = db.query(Question).filter(
+                Question.paper_id == q.paper_id, Question.status == 1,
+                Question.answer != "").count()
+    db.commit()
+    exp = q.explanation
+    db.close()
+    return {"answer": r["answer"], "explanation": exp, "origin": "ai", "cached": False}
 
 
 @app.get("/api/practice/similar/{question_id}")
@@ -495,6 +569,163 @@ def similar(question_id: int, k: int = 5, u: User = Depends(auth.current_user)):
             vo = _q_to_vo(sq, db, user_id=u.id)
             vo["distance"] = round(dist, 4)
             out.append(vo)
+    db.close()
+    return {"count": len(out), "items": out}
+
+
+# ============ 考点树(细分题型进度:题量/已做/正确率,薄弱一眼看出) ============
+@app.get("/api/category/tree")
+def category_tree(u: User = Depends(auth.current_user)):
+    uid = u.id
+    db = SessionLocal()
+    qrows = db.query(Question.id, Question.category_l1, Question.category_l2,
+                     Question.knowledge_point) \
+        .filter(Question.status == 1,
+                Question.scope.in_(["public", f"user:{uid}"])).all()
+    rec_rows = db.query(PracticeRecord.question_id, PracticeRecord.is_correct) \
+        .filter(PracticeRecord.user_id == uid).all()
+    db.close()
+    # 每题的作答情况(去重:做过即 done,judged 取全部判分记录)
+    per_q = {}
+    for qid, ok in rec_rows:
+        s = per_q.setdefault(qid, {"judged": 0, "correct": 0})
+        if ok in (0, 1):
+            s["judged"] += 1
+            s["correct"] += ok
+
+    def _node():
+        return {"total": 0, "done": 0, "judged": 0, "correct": 0, "children": {}}
+
+    tree = {}
+    for qid, l1, l2, kp in qrows:
+        l1, l2, kp = l1 or "其他", l2 or "(未细分)", (kp or "").strip()
+        n1 = tree.setdefault(l1, _node())
+        n2 = n1["children"].setdefault(l2, _node())
+        n3 = n2["children"].setdefault(kp, _node()) if kp else None
+        s = per_q.get(qid)
+        for n in (n1, n2, n3):
+            if n is None:
+                continue
+            n["total"] += 1
+            if s:
+                n["done"] += 1
+                n["judged"] += s["judged"]
+                n["correct"] += s["correct"]
+
+    def _fmt(name, n):
+        acc = round(n["correct"] / n["judged"] * 100) if n["judged"] else None
+        return {"name": name, "total": n["total"], "done": n["done"],
+                "accuracy": acc,
+                "weak": acc is not None and n["judged"] >= 5 and acc < 60,
+                "children": [_fmt(k, v) for k, v in
+                             sorted(n["children"].items(),
+                                    key=lambda kv: -kv[1]["total"])]}
+
+    out = [_fmt(k, v) for k, v in sorted(tree.items(), key=lambda kv: -kv[1]["total"])]
+    return {"items": out}
+
+
+# ============ 整卷模考(限时模拟+交卷出分,行测核心是时间管理) ============
+@app.post("/api/mock/start")
+def mock_start(paper_id: int = Form(...), time_limit: int = Form(120),
+               u: User = Depends(auth.current_user)):
+    if not (5 <= time_limit <= 180):
+        raise HTTPException(400, "限时须在 5~180 分钟")
+    db = SessionLocal()
+    p = _paper_or_403(db, paper_id, u, need_owner=False)
+    qs = db.query(Question).filter(Question.paper_id == paper_id,
+                                   Question.status == 1) \
+        .order_by(Question.seq_no == 0, Question.seq_no, Question.id).all()
+    if not qs:
+        db.close()
+        raise HTTPException(400, "这套卷没有可考的题")
+    m = MockExam(user_id=u.id, paper_id=paper_id,
+                 time_limit_min=time_limit, total=len(qs))
+    db.add(m)
+    db.commit()
+    out = [_q_to_vo(q, db, user_id=u.id) for q in qs]   # 不带答案
+    mid, title = m.id, p.title
+    db.close()
+    return {"mock_id": mid, "title": title, "time_limit": time_limit,
+            "count": len(out), "items": out}
+
+
+@app.post("/api/mock/submit")
+def mock_submit(payload: dict = Body(...), u: User = Depends(auth.current_user)):
+    """交卷:统一判分,生成分模块报告;计入做题记录与错题本。"""
+    mid = int(payload.get("mock_id") or 0)
+    answers = payload.get("answers") or []       # [{id, ans, time_ms}]
+    time_used = int(payload.get("time_used_sec") or 0)
+    db = SessionLocal()
+    m = db.get(MockExam, mid)
+    if not m or m.user_id != u.id:
+        db.close()
+        raise HTTPException(404, "模考不存在")
+    if m.submitted:
+        db.close()
+        raise HTTPException(409, "该模考已交卷")
+    ans_map = {int(a.get("id") or 0): a for a in answers if a.get("id")}
+    qs = db.query(Question).filter(Question.paper_id == m.paper_id,
+                                   Question.status == 1).all()
+    by_mod = {}
+    detail, correct_n, answered = [], 0, 0
+    for q in qs:
+        a = ans_map.get(q.id)
+        user_ans = (a.get("ans") or "").strip().upper() if a else ""
+        t_ms = max(0, min(int(a.get("time_ms") or 0), 30 * 60 * 1000)) if a else 0
+        has_ans = bool((q.answer or "").strip())
+        right = q.answer.strip().upper() if has_ans else ""
+        ok = (user_ans == right) if (has_ans and user_ans) else None
+        if user_ans:
+            answered += 1
+            db.add(PracticeRecord(user_id=u.id, question_id=q.id,
+                                  user_answer=user_ans, time_ms=t_ms,
+                                  is_correct=1 if ok else (0 if ok is False else -1)))
+            _update_wrongbook(db, u.id, q.id, ok)
+        if ok:
+            correct_n += 1
+        mod = by_mod.setdefault(q.category_l1 or "其他",
+                                {"total": 0, "answered": 0, "correct": 0, "ms": 0})
+        mod["total"] += 1
+        if user_ans:
+            mod["answered"] += 1
+            mod["ms"] += t_ms
+        if ok:
+            mod["correct"] += 1
+        detail.append({"id": q.id, "seq_no": q.seq_no, "your": user_ans,
+                       "answer": right, "correct": ok,
+                       "explanation": q.explanation or ""})
+    report = [{"name": k, **v,
+               "avg_sec": round(v["ms"] / v["answered"] / 1000) if v["answered"] else 0}
+              for k, v in by_mod.items()]
+    m.submitted = 1
+    m.answered = answered
+    m.correct = correct_n
+    m.time_used_sec = max(0, min(time_used, m.time_limit_min * 60 + 60))
+    m.report = json.dumps(report, ensure_ascii=False)
+    db.commit()
+    total = m.total
+    db.close()
+    score = round(correct_n / total * 100, 1) if total else 0
+    return {"ok": True, "total": total, "answered": answered,
+            "correct": correct_n, "score": score,
+            "time_used_sec": time_used, "by_module": report, "detail": detail}
+
+
+@app.get("/api/mock/history")
+def mock_history(u: User = Depends(auth.current_user)):
+    db = SessionLocal()
+    ms = db.query(MockExam).filter(MockExam.user_id == u.id,
+                                   MockExam.submitted == 1) \
+        .order_by(MockExam.id.desc()).limit(20).all()
+    out = []
+    for m in ms:
+        p = db.get(Paper, m.paper_id)
+        out.append({"id": m.id, "paper": p.title if p else f"#{m.paper_id}",
+                    "total": m.total, "answered": m.answered, "correct": m.correct,
+                    "score": round(m.correct / m.total * 100, 1) if m.total else 0,
+                    "time_used_sec": m.time_used_sec,
+                    "date": m.created_at.strftime("%m-%d %H:%M") if m.created_at else ""})
     db.close()
     return {"count": len(out), "items": out}
 
@@ -681,7 +912,8 @@ def mine_job_status(job_id: int, u: User = Depends(auth.current_user)):
         raise HTTPException(404, "任务不存在")
     return {"id": job.id, "file_name": job.file_name, "status": job.status,
             "progress": job.progress, "total": job.total_count,
-            "done": job.done_count, "dup": job.dup_count, "error": job.error_msg}
+            "done": job.done_count, "dup": job.dup_count,
+            "missing": job.missing_nums, "error": job.error_msg}
 
 
 @app.post("/api/mine/delete")
@@ -837,6 +1069,7 @@ async def paper_answers(pid: int, text: str = Form(""),
         if not it:
             continue
         q.answer = it["answer"]
+        q.answer_origin = "official"   # 上传的答案覆盖 AI 生成的
         if it.get("explanation"):
             q.explanation = it["explanation"][:4000]
         matched += 1
@@ -970,19 +1203,67 @@ def invite_delete(iid: int, admin: User = Depends(auth.require_admin)):
 
 # ============ 错题本/收藏(登录用户) ============
 @app.get("/api/wrongbook")
-def wrongbook(u: User = Depends(auth.current_user)):
+def wrongbook(due: int = 0, u: User = Depends(auth.current_user)):
+    """错题本。due=1 只看今日到期待复习的(间隔重复)。"""
     db = SessionLocal()
-    wbs = db.query(WrongBook).filter(WrongBook.user_id == u.id,
-                                     WrongBook.mastered == 0).all()
+    qy = db.query(WrongBook).filter(WrongBook.user_id == u.id,
+                                    WrongBook.mastered == 0)
+    if due:
+        today = date.today().strftime("%Y-%m-%d")
+        qy = qy.filter(WrongBook.next_review != "", WrongBook.next_review <= today)
     out = []
-    for wb in wbs:
+    for wb in qy.all():
         q = db.get(Question, wb.question_id)
-        if q:
+        if q and q.status == 1:
             vo = _q_to_vo(q, db, user_id=u.id)
             vo["wrong_count"] = wb.wrong_count
+            vo["next_review"] = wb.next_review
             out.append(vo)
     db.close()
     return {"count": len(out), "items": out}
+
+
+@app.get("/api/practice/weak")
+def weak_set(limit: int = 10, u: User = Depends(auth.current_user)):
+    """弱项特训:找正确率最低的题型(判过分≥5题),自动组一卷没做过的题。"""
+    uid = u.id
+    db = SessionLocal()
+    rows = db.query(PracticeRecord.question_id, PracticeRecord.is_correct) \
+        .filter(PracticeRecord.user_id == uid,
+                PracticeRecord.is_correct.in_([0, 1])).all()
+    qcat = dict(db.query(Question.id, Question.category_l2).filter(
+        Question.id.in_([r[0] for r in rows]) if rows else False).all()) if rows else {}
+    acc = {}
+    for qid, ok in rows:
+        l2 = qcat.get(qid) or ""
+        if not l2:
+            continue
+        s = acc.setdefault(l2, [0, 0])
+        s[0] += 1
+        s[1] += ok
+    weak = sorted(((l2, round(c / n * 100)) for l2, (n, c) in acc.items()
+                   if n >= 5 and c / n < 0.7), key=lambda x: x[1])[:3]
+    if not weak:
+        db.close()
+        return {"count": 0, "focus": [], "items": [],
+                "hint": "先多做些题(每个题型至少5题),系统才能定位你的弱项"}
+    done_ids = {r[0] for r in rows}
+    pool = db.query(Question).filter(
+        Question.status == 1,
+        Question.scope.in_(["public", f"user:{uid}"]),
+        Question.category_l2.in_([w[0] for w in weak]),
+        ~Question.id.in_(done_ids)).limit(300).all()
+    if len(pool) < limit:   # 没做过的不够,做过的也拿来重练
+        pool += db.query(Question).filter(
+            Question.status == 1,
+            Question.scope.in_(["public", f"user:{uid}"]),
+            Question.category_l2.in_([w[0] for w in weak]),
+            Question.id.in_(done_ids)).limit(100).all()
+    random.shuffle(pool)
+    out = [_q_to_vo(q, db, user_id=uid) for q in pool[:limit]]
+    db.close()
+    return {"count": len(out), "items": out,
+            "focus": [{"name": w[0], "accuracy": w[1]} for w in weak]}
 
 
 @app.post("/api/wrongbook/master")
@@ -1046,6 +1327,10 @@ def stats(u: User = Depends(auth.current_user)):
     correct = sum(1 for r in judged if r.is_correct == 1)
     wrong = db.query(WrongBook).filter(WrongBook.user_id == uid,
                                        WrongBook.mastered == 0).count()
+    due_review = db.query(WrongBook).filter(
+        WrongBook.user_id == uid, WrongBook.mastered == 0,
+        WrongBook.next_review != "",
+        WrongBook.next_review <= date.today().strftime("%Y-%m-%d")).count()
     fav = db.query(Favorite).filter(Favorite.user_id == uid).count()
     day_set = {r.created_at.date() for r in recs if r.created_at}
     today = date.today()
@@ -1059,13 +1344,18 @@ def stats(u: User = Depends(auth.current_user)):
         q = db.get(Question, r.question_id)
         if not q:
             continue
-        c = by_cat.setdefault(q.category_l1 or "其他", {"done": 0, "correct": 0, "judged": 0})
+        c = by_cat.setdefault(q.category_l1 or "其他",
+                              {"done": 0, "correct": 0, "judged": 0, "ms": 0, "timed": 0})
         c["done"] += 1
         if r.is_correct in (0, 1):
             c["judged"] += 1
             c["correct"] += 1 if r.is_correct == 1 else 0
+        if r.time_ms:
+            c["timed"] += 1
+            c["ms"] += r.time_ms
     cats = [{"name": k, "done": v["done"],
-             "accuracy": round(v["correct"] / v["judged"] * 100) if v["judged"] else None}
+             "accuracy": round(v["correct"] / v["judged"] * 100) if v["judged"] else None,
+             "avg_sec": round(v["ms"] / v["timed"] / 1000) if v["timed"] else None}
             for k, v in by_cat.items()]
     try:
         days_left = (datetime.strptime(config.EXAM_DATE, "%Y-%m-%d").date() - today).days
@@ -1074,7 +1364,8 @@ def stats(u: User = Depends(auth.current_user)):
     db.close()
     return {"total_q": total_q, "pending": pending, "done": len(recs), "correct": correct,
             "accuracy": round(correct / len(judged) * 100, 1) if judged else None,
-            "wrong": wrong, "favorite": fav, "streak": _streak(day_set),
+            "wrong": wrong, "due_review": due_review,
+            "favorite": fav, "streak": _streak(day_set),
             "today_count": today_count, "active_days": len(day_set),
             "trend": trend, "by_category": cats,
             "exam_name": config.EXAM_NAME, "exam_days_left": days_left,
@@ -1145,7 +1436,8 @@ def list_channels(admin: User = Depends(auth.require_admin)):
     rows = db.query(AiChannel).order_by(AiChannel.priority, AiChannel.id).all()
     out = [{"id": r.id, "name": r.name, "base_url": r.base_url, "model": r.model,
             "api_key": _mask_key(r.api_key), "enabled": r.enabled,
-            "priority": r.priority, "fail_count": r.fail_count,
+            "priority": r.priority, "supports_vision": r.supports_vision,
+            "fail_count": r.fail_count,
             "last_error": r.last_error} for r in rows]
     db.close()
     return {"items": out}
@@ -1155,6 +1447,7 @@ def list_channels(admin: User = Depends(auth.require_admin)):
 def save_channel(cid: int = Form(0), name: str = Form(...),
                  base_url: str = Form(...), model: str = Form(...),
                  api_key: str = Form(""), priority: int = Form(10),
+                 supports_vision: int = Form(0),
                  admin: User = Depends(auth.require_admin)):
     """新增/编辑渠道。编辑时 api_key 留空表示不改。"""
     name, base_url, model = name.strip(), base_url.strip().rstrip("/"), model.strip()
@@ -1170,6 +1463,7 @@ def save_channel(cid: int = Form(0), name: str = Form(...),
             db.close()
             raise HTTPException(404, "渠道不存在")
         row.name, row.base_url, row.model, row.priority = name, base_url, model, priority
+        row.supports_vision = 1 if supports_vision else 0
         if api_key:
             row.api_key = api_key
     else:
@@ -1177,7 +1471,8 @@ def save_channel(cid: int = Form(0), name: str = Form(...),
             db.close()
             raise HTTPException(400, "新渠道必须填 API Key")
         row = AiChannel(name=name, base_url=base_url, model=model,
-                        api_key=api_key, priority=priority)
+                        api_key=api_key, priority=priority,
+                        supports_vision=1 if supports_vision else 0)
         db.add(row)
     db.commit()
     rid = row.id
