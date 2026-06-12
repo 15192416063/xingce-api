@@ -13,7 +13,7 @@ import config
 import ai
 import vectors
 import textutil
-from db import SessionLocal, IngestionJob, Question, QuestionImage, MaterialGroup
+from db import SessionLocal, IngestionJob, Question, QuestionImage, MaterialGroup, Paper
 
 # 复用已验证的抠图/材料组模块(在上级目录)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -26,9 +26,17 @@ def _fingerprint(text: str) -> str:
 
 
 def _full_text(pdf_path: str) -> str:
-    doc = fitz.open(pdf_path)
-    parts = [p.get_text() for p in doc]
-    full = "\n".join(parts)
+    """整卷文字。优先转 Markdown(版面/换行/表格更干净,切题准确率明显更高),
+    转换失败再退回纯文本提取。"""
+    full = ""
+    try:
+        import pymupdf4llm
+        full = pymupdf4llm.to_markdown(pdf_path, show_progress=False)
+    except Exception:
+        pass
+    if len(re.sub(r'\s', '', full)) < 50:   # MD 转出来近乎空(扫描件等)→ 退回纯文本
+        doc = fitz.open(pdf_path)
+        full = "\n".join(p.get_text() for p in doc)
     # 砍掉申论/材料写作尾部
     for marker in ["材料处理题", "申论"]:
         idx = full.find(marker)
@@ -67,13 +75,24 @@ def run(job_id: int):
     """后台执行入库。异常时把任务标失败。"""
     db = SessionLocal()
     job = db.get(IngestionJob, job_id)
-    pdf_path, scope, source = job.file_path, job.scope, job.file_name
+    pdf_path, scope, source, uid = job.file_path, job.scope, job.file_name, job.user_id
     db.close()
     # 用户私有库:无管理员审核环节,抠图/资料分析题直接入池
     auto_ok = scope.startswith("user:")
+    paper_id = 0
 
     try:
         _set(job_id, status=1, progress=2)  # 解析中
+
+        # 0) 一份 PDF = 一套卷(题库以套卷为单位展示)
+        db = SessionLocal()
+        paper = Paper(user_id=uid, scope=scope,
+                      title=(source or "未命名卷").rsplit(".", 1)[0][:255],
+                      source_file=source or "")
+        db.add(paper)
+        db.commit()
+        paper_id = paper.id
+        db.close()
 
         # 0) 自适应噪声检测:扫全部页,找出"过半页面重复的短行"(页眉/页脚/水印)
         try:
@@ -126,7 +145,8 @@ def run(job_id: int):
             existing.add(fp)
             c = ai.classify(body)
             db = SessionLocal()
-            qe = Question(job_id=job_id, scope=scope, source=source,
+            qe = Question(job_id=job_id, paper_id=paper_id, scope=scope, source=source,
+                          seq_no=int(q.get("qnum") or 0),
                           category_l1=c["l1"], category_l2=c["l2"],
                           knowledge_point=c["kp"], topic_summary=c["summary"],
                           difficulty=c["diff"], content=textutil.clean_text(body, doc_noise),
@@ -164,7 +184,8 @@ def run(job_id: int):
                     pass
             conf = 70 if cr["confidence"] == "high" else 40
             db = SessionLocal()
-            qe = Question(job_id=job_id, scope=scope, source=source, seq_no=cr["qnum"],
+            qe = Question(job_id=job_id, paper_id=paper_id, scope=scope,
+                          source=source, seq_no=cr["qnum"],
                           category_l1=l1, category_l2=l2, topic_summary=summary,
                           difficulty=diff, content=textutil.clean_text(body, doc_noise),
                           fingerprint=fp,
@@ -225,7 +246,7 @@ def run(job_id: int):
                 opt_imgs = [os.path.relpath(p, config.IMAGE_DIR)
                             for p in s.get("images", [])]
                 db = SessionLocal()
-                qe = Question(job_id=job_id, scope=scope, source=source,
+                qe = Question(job_id=job_id, paper_id=paper_id, scope=scope, source=source,
                               seq_no=s["qnum"], material_id=mid,
                               category_l1=l1, category_l2=l2, knowledge_point=kp,
                               topic_summary=summary, difficulty=diff,
@@ -252,8 +273,30 @@ def run(job_id: int):
                 _set(job_id, done_count=done, dup_count=dup,
                      progress=25 + int(done * 75 / max(total, 1)))
 
+        # 套卷收尾:回填题数;一道题都没入的空卷直接标删
+        db = SessionLocal()
+        p = db.get(Paper, paper_id)
+        n = db.query(Question).filter(Question.paper_id == paper_id,
+                                      Question.status != 2).count()
+        p.question_count = n
+        if n == 0:
+            p.status = 2
+        db.commit()
+        db.close()
+
         _set(job_id, status=3, progress=100, done_count=done, dup_count=dup,
              error_msg=split_err)
 
     except Exception as e:
         _set(job_id, status=4, error_msg=str(e)[:1000])
+        if paper_id:
+            try:
+                db = SessionLocal()
+                p = db.get(Paper, paper_id)
+                if p and not db.query(Question).filter(
+                        Question.paper_id == paper_id).count():
+                    p.status = 2
+                    db.commit()
+                db.close()
+            except Exception:
+                pass

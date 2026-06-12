@@ -59,6 +59,8 @@ TOKEN_TTL_DAYS = 30
 # 首位注册者自动成为管理员;也可用此口令注册管理员。
 # ⚠️ 不设环境变量时,口令注册管理员功能自动关闭(防止默认口令被人利用提权)。
 ADMIN_SIGNUP_CODE = os.getenv("XC_ADMIN_CODE", "")
+# 注册是否必须邀请码(可在管理面板热改;同一邀请码可限注册人数)
+INVITE_REQUIRED = os.getenv("XC_INVITE_REQUIRED", "false").lower() == "true"
 
 # ---- 安全防护 ----
 # 单设备登录:新登录使旧设备令牌全部失效(防共号/防令牌被盗后长期可用)
@@ -80,8 +82,10 @@ BACKUP_KEEP = int(os.getenv("XC_BACKUP_KEEP", "7"))
 # ---- 免费系统 · 成本控制 ----
 # 每人每日 AI 调用硬上限(防滥用/焊死成本,管理员不限)
 AI_DAILY_CAP = int(os.getenv("XC_AI_DAILY_CAP", "30"))
-# 私有题库容量(全员统一;一份真题卷约130题,够十几套)
-MINE_CAP = int(os.getenv("XC_MINE_CAP", "2000"))
+# 私有题库容量:以套卷为单位,每人 30 套
+MINE_PAPER_CAP = int(os.getenv("XC_MINE_PAPER_CAP", "30"))
+# (旧)题数上限,仍作兜底防单卷超大灌库
+MINE_CAP = int(os.getenv("XC_MINE_CAP", "5000"))
 # 用户上传 PDF 大小上限(MB)与每日上传份数上限
 MINE_PDF_MAX_MB = int(os.getenv("XC_MINE_PDF_MAX_MB", "30"))
 MINE_PDF_DAILY = int(os.getenv("XC_MINE_PDF_DAILY", "3"))

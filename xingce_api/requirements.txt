@@ -4,6 +4,7 @@ python-multipart
 sqlalchemy
 chromadb
 PyMuPDF
+pymupdf4llm
 langchain-openai
 reportlab
 requests

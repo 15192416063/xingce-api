@@ -58,11 +58,26 @@ class MaterialGroup(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class Paper(Base):
+    """套卷:一份上传的 PDF = 一套卷。题库以套卷为单位展示/管理。"""
+    __tablename__ = "paper"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, default=0, index=True)  # 0=公共(管理员)
+    scope: Mapped[str] = mapped_column(String(40), default="public", index=True)
+    title: Mapped[str] = mapped_column(String(255))
+    source_file: Mapped[str] = mapped_column(String(255), default="")
+    question_count: Mapped[int] = mapped_column(Integer, default=0)
+    answer_count: Mapped[int] = mapped_column(Integer, default=0)   # 已录答案的题数
+    status: Mapped[int] = mapped_column(Integer, default=1)         # 1正常 2已删
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class Question(Base):
     """题目核心表"""
     __tablename__ = "question"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     job_id: Mapped[int] = mapped_column(Integer, default=0)
+    paper_id: Mapped[int] = mapped_column(Integer, default=0, index=True)  # 所属套卷
     material_id: Mapped[int] = mapped_column(Integer, default=0, index=True)  # 资料分析关联材料组
     scope: Mapped[str] = mapped_column(String(40), default="public", index=True)
     source: Mapped[str] = mapped_column(String(255), default="")
@@ -134,6 +149,51 @@ class User(Base):
     status: Mapped[int] = mapped_column(Integer, default=1)      # 1正常 0封禁
     # 令牌版本:登录/改密时+1,旧令牌立即全部失效(单设备登录/吊销的核心)
     token_ver: Mapped[int] = mapped_column(Integer, default=0)
+    invite_code: Mapped[str] = mapped_column(String(32), default="")  # 注册时用的邀请码
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class InviteCode(Base):
+    """邀请码:同一码可限制注册人数,管理面板生成/停用。"""
+    __tablename__ = "invite_code"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    max_uses: Mapped[int] = mapped_column(Integer, default=10)
+    used_count: Mapped[int] = mapped_column(Integer, default=0)
+    enabled: Mapped[int] = mapped_column(Integer, default=1)
+    note: Mapped[str] = mapped_column(String(128), default="")
+    created_by: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ExamInfo(Base):
+    """全国考试日历:各省/国考的报名与笔试时间(内置+自动抓取+手动维护)。"""
+    __tablename__ = "exam_info"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    region: Mapped[str] = mapped_column(String(32), index=True)      # 全国/北京/广东…
+    exam_type: Mapped[str] = mapped_column(String(32), default="省考")  # 国考/省考/事业单位/选调生
+    name: Mapped[str] = mapped_column(String(128))
+    signup_start: Mapped[str] = mapped_column(String(20), default="")  # YYYY-MM-DD,未知留空
+    signup_end: Mapped[str] = mapped_column(String(20), default="")
+    exam_date: Mapped[str] = mapped_column(String(20), default="")
+    announce_url: Mapped[str] = mapped_column(String(512), default="")
+    note: Mapped[str] = mapped_column(String(255), default="")
+    origin: Mapped[str] = mapped_column(String(16), default="内置")   # 内置/抓取/手动
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class AiChannel(Base):
+    """AI 模型渠道(多个 OpenAI 兼容 API,按优先级自动故障切换)"""
+    __tablename__ = "ai_channel"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64))                # 显示名称,如 DeepSeek
+    base_url: Mapped[str] = mapped_column(String(255))           # 如 https://api.deepseek.com/v1
+    api_key: Mapped[str] = mapped_column(Text, default="")
+    model: Mapped[str] = mapped_column(String(128))              # 如 deepseek-chat
+    enabled: Mapped[int] = mapped_column(Integer, default=1)
+    priority: Mapped[int] = mapped_column(Integer, default=10)   # 小的先用
+    fail_count: Mapped[int] = mapped_column(Integer, default=0)  # 累计失败(监控用)
+    last_error: Mapped[str] = mapped_column(String(255), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
@@ -237,6 +297,42 @@ def _migrate():
                 pass
 
 
+def _backfill_papers():
+    """老库迁移:paper_id=0 的存量题,按 (scope, source) 归组补建套卷。幂等。"""
+    db = SessionLocal()
+    try:
+        rows = (db.query(Question.scope, Question.source)
+                .filter(Question.paper_id == 0, Question.status != 2)
+                .distinct().all())
+        for scope, source in rows:
+            uid = int(scope[5:]) if scope.startswith("user:") else 0
+            title = (source or "未命名卷").rsplit(".", 1)[0][:255]
+            p = db.query(Paper).filter(Paper.scope == scope,
+                                       Paper.source_file == (source or "")).first()
+            if not p:
+                p = Paper(user_id=uid, scope=scope, title=title,
+                          source_file=source or "")
+                db.add(p)
+                db.commit()
+            db.query(Question).filter(Question.paper_id == 0,
+                                      Question.scope == scope,
+                                      Question.source == (source or "")) \
+                .update({Question.paper_id: p.id}, synchronize_session=False)
+            db.commit()
+        # 重算每卷题数/答案数
+        for p in db.query(Paper).filter(Paper.status == 1).all():
+            qs = db.query(Question).filter(Question.paper_id == p.id,
+                                           Question.status == 1)
+            p.question_count = qs.count()
+            p.answer_count = qs.filter(Question.answer != "").count()
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
 def init_db():
     Base.metadata.create_all(engine)
     _migrate()
+    _backfill_papers()

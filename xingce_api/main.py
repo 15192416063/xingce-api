@@ -26,7 +26,9 @@ import stats as opstats
 import security
 from db import (init_db, SessionLocal, IngestionJob, Question, QuestionImage,
                 PracticeRecord, WrongBook, MaterialGroup, Favorite, User, News,
-                AiUsage, StatDaily, VisitDay, LoginLog, Setting, AuditLog)
+                AiUsage, StatDaily, VisitDay, LoginLog, Setting, AuditLog, AiChannel,
+                Paper, InviteCode, ExamInfo)
+import exams
 
 # ---- 错误日志:轮转文件,排障不靠猜(稳定性) ----
 import logging
@@ -54,11 +56,15 @@ RUNTIME_SETTINGS = {
     "XC_EMBED_MODEL": ("EMBED_MODEL", False),
     "XC_EXAM_NAME": ("EXAM_NAME", False),
     "XC_EXAM_DATE": ("EXAM_DATE", False),
+    "XC_INVITE_REQUIRED": ("INVITE_REQUIRED", False),   # "true"/"false"
 }
 
 
 def _apply_setting(skey: str, sval: str):
     attr, _ = RUNTIME_SETTINGS[skey]
+    if skey == "XC_INVITE_REQUIRED":
+        setattr(config, attr, sval.strip().lower() == "true")
+        return
     setattr(config, attr, sval)
     if skey == "DEEPSEEK_API_KEY":
         ai._llm.cache_clear()        # 换 key 后重建 LLM 客户端
@@ -84,6 +90,10 @@ def _startup_recover():
 
 
 _startup_recover()
+try:
+    exams.seed()    # 全国考试日历内置数据(幂等)
+except Exception:
+    _logger.exception("考试日历种子数据写入失败")
 
 
 def _audit(user_id: int, action: str, detail: str = ""):
@@ -219,10 +229,17 @@ def _log_login(username, ip, ok):
         pass
 
 
+@app.get("/api/auth/config")
+def auth_config():
+    """注册页需要知道的公开配置(不含敏感信息)。"""
+    return {"invite_required": bool(config.INVITE_REQUIRED)}
+
+
 @app.post("/api/auth/register")
 def register(request: Request, username: str = Form(...), password: str = Form(...),
-             admin_code: str = Form("")):
+             admin_code: str = Form(""), invite: str = Form("")):
     username = username.strip()
+    invite = invite.strip()[:32]
     # 用户名:3-20位,仅限中文/字母/数字/下划线(防注入垃圾字符与超长DoS)
     if not re.fullmatch(r"[\w一-龥]{3,20}", username):
         raise HTTPException(400, "用户名3~20位,仅限中文、字母、数字、下划线")
@@ -237,8 +254,22 @@ def register(request: Request, username: str = Form(...), password: str = Form(.
     # 邀请码提权:仅在管理员明确配置了 XC_ADMIN_CODE 时才生效(默认关闭)
     code_ok = bool(config.ADMIN_SIGNUP_CODE) and admin_code == config.ADMIN_SIGNUP_CODE
     role = 1 if (is_first or code_ok) else 0
-    u = User(username=username, password_hash=auth.hash_password(password), role=role)
+    # 邀请码注册控制:开启后,普通注册必须有效邀请码(同码限人数)
+    iv = None
+    if config.INVITE_REQUIRED and not is_first and role != 1:
+        iv = db.query(InviteCode).filter(InviteCode.code == invite,
+                                         InviteCode.enabled == 1).first() if invite else None
+        if not iv:
+            db.close()
+            raise HTTPException(403, "需要有效的邀请码才能注册")
+        if iv.used_count >= iv.max_uses:
+            db.close()
+            raise HTTPException(403, "该邀请码名额已用完")
+    u = User(username=username, password_hash=auth.hash_password(password),
+             role=role, invite_code=invite if iv else "")
     db.add(u)
+    if iv:
+        iv.used_count += 1
     db.commit()
     token = auth.make_token(u.id, u.role, u.token_ver or 0)
     vo = _user_vo(u)
@@ -608,8 +639,9 @@ async def mine_upload_pdf(background: BackgroundTasks, file: UploadFile = File(.
     之后在 AI 对话里问某类题,系统会优先从这里调取。"""
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "仅支持 PDF 文件")
-    cap = config.MINE_CAP
     db = SessionLocal()
+    paper_count = db.query(Paper).filter(Paper.scope == f"user:{u.id}",
+                                         Paper.status == 1).count()
     mine_count = db.query(Question).filter(Question.scope == f"user:{u.id}",
                                            Question.status == 1).count()
     running = db.query(IngestionJob).filter(IngestionJob.user_id == u.id,
@@ -618,8 +650,11 @@ async def mine_upload_pdf(background: BackgroundTasks, file: UploadFile = File(.
     today_jobs = db.query(IngestionJob).filter(IngestionJob.user_id == u.id,
                                                IngestionJob.created_at >= today0).count()
     db.close()
-    if mine_count >= cap:
-        raise HTTPException(402, f"私有题库已达上限({cap}题),可在「我的题库」清理后再传")
+    if paper_count >= config.MINE_PAPER_CAP:
+        raise HTTPException(402, f"已达套卷上限({config.MINE_PAPER_CAP}套),"
+                                 "可在「套卷题库」删除不用的卷后再传")
+    if mine_count >= config.MINE_CAP:
+        raise HTTPException(402, f"私有题库已达上限({config.MINE_CAP}题),请清理后再传")
     if running:
         raise HTTPException(409, "你有一份 PDF 正在解析中,完成后再传下一份")
     if today_jobs >= config.MINE_PDF_DAILY:
@@ -676,6 +711,261 @@ def mine_list(u: User = Depends(auth.current_user)):
         by_cat[key] = by_cat.get(key, 0) + 1
     db.close()
     return {"count": len(out), "cap": config.MINE_CAP, "by_category": by_cat, "items": out}
+
+
+# ============ 套卷题库(题库以 PDF/套卷为单位展示) ============
+def _paper_or_403(db, pid: int, u: User, need_owner=True):
+    p = db.get(Paper, pid)
+    if not p or p.status != 1:
+        db.close()
+        raise HTTPException(404, "套卷不存在")
+    visible = p.scope == "public" or p.scope == f"user:{u.id}"
+    if not visible:
+        db.close()
+        raise HTTPException(404, "套卷不存在")
+    if need_owner:
+        owns = p.scope == f"user:{u.id}" or (p.scope == "public" and u.role == 1)
+        if not owns:
+            db.close()
+            raise HTTPException(403, "无权操作该套卷")
+    return p
+
+
+@app.get("/api/papers")
+def papers_list(u: User = Depends(auth.current_user)):
+    """套卷列表(公共卷+我的卷),含做题进度。"""
+    db = SessionLocal()
+    ps = db.query(Paper).filter(Paper.status == 1,
+                                Paper.scope.in_(["public", f"user:{u.id}"])) \
+        .order_by(Paper.id.desc()).all()
+    # 我在每卷已做的题数(一次聚合查询,避免 N+1)
+    done_rows = db.query(Question.paper_id, func.count(func.distinct(Question.id))) \
+        .join(PracticeRecord, PracticeRecord.question_id == Question.id) \
+        .filter(PracticeRecord.user_id == u.id, Question.paper_id != 0) \
+        .group_by(Question.paper_id).all()
+    done_map = dict(done_rows)
+    out = [{"id": p.id, "title": p.title, "mine": p.scope != "public",
+            "question_count": p.question_count, "answer_count": p.answer_count,
+            "done": done_map.get(p.id, 0),
+            "date": p.created_at.strftime("%Y-%m-%d") if p.created_at else ""}
+           for p in ps]
+    mine_n = sum(1 for p in ps if p.scope != "public")
+    db.close()
+    return {"count": len(out), "items": out,
+            "mine_count": mine_n, "paper_cap": config.MINE_PAPER_CAP}
+
+
+@app.get("/api/papers/{pid}/questions")
+def paper_questions(pid: int, u: User = Depends(auth.current_user)):
+    db = SessionLocal()
+    p = _paper_or_403(db, pid, u, need_owner=False)
+    # 有题号的按题号排,没题号的(seq_no=0)排最后按入库序
+    qs = db.query(Question).filter(Question.paper_id == pid, Question.status == 1) \
+        .order_by(Question.seq_no == 0, Question.seq_no, Question.id).all()
+    out = [_q_to_vo(q, db, user_id=u.id) for q in qs]
+    title, ac = p.title, p.answer_count
+    can_edit = p.scope == f"user:{u.id}" or (p.scope == "public" and u.role == 1)
+    db.close()
+    return {"title": title, "answer_count": ac, "can_edit": can_edit,
+            "count": len(out), "items": out}
+
+
+@app.delete("/api/papers/{pid}")
+def paper_delete(pid: int, u: User = Depends(auth.current_user)):
+    """删除套卷(本人私有卷;公共卷仅管理员)。题目与向量一并删。"""
+    db = SessionLocal()
+    p = _paper_or_403(db, pid, u)
+    qids = [q.id for q in db.query(Question.id).filter(Question.paper_id == pid).all()]
+    db.query(Question).filter(Question.paper_id == pid) \
+        .update({Question.status: 2}, synchronize_session=False)
+    p.status = 2
+    db.commit()
+    db.close()
+    for qid in qids:
+        try:
+            vectors.delete(qid)
+        except Exception:
+            pass
+    if u.role == 1:
+        _audit(u.id, "删套卷", f"#{pid}")
+    return {"ok": True}
+
+
+def _qnum_of(q: Question) -> int:
+    """题目的卷内题号:优先 seq_no,否则从题干开头提取。"""
+    if q.seq_no:
+        return q.seq_no
+    m = re.match(r'\s*(\d{1,3})\s*[\.、．]', q.content or "")
+    return int(m.group(1)) if m else 0
+
+
+@app.post("/api/papers/{pid}/answers")
+async def paper_answers(pid: int, text: str = Form(""),
+                        file: UploadFile = File(None),
+                        u: User = Depends(auth.current_user)):
+    """给套卷上传答案:粘贴答案文本或传答案 PDF,AI 解析「题号→答案/解析」自动填回。"""
+    db = SessionLocal()
+    _paper_or_403(db, pid, u)
+    db.close()
+    if file is not None and file.filename:
+        if not file.filename.lower().endswith(".pdf"):
+            raise HTTPException(400, "答案文件仅支持 PDF")
+        save = os.path.join(config.PDF_DIR, f"ans_{uuid.uuid4().hex}.pdf")
+        await _save_pdf(file, save, config.MINE_PDF_MAX_MB)
+        try:
+            import fitz
+            text = "\n".join(p.get_text() for p in fitz.open(save))
+        finally:
+            try:
+                os.remove(save)
+            except OSError:
+                pass
+    text = (text or "").strip()
+    if len(text) < 3:
+        raise HTTPException(400, "请粘贴答案内容或上传答案 PDF")
+    _ai_guard(u)
+    key = ai.parse_answer_key(text[:60000])
+    if not key:
+        raise HTTPException(422, "没有解析出「题号→答案」,请检查答案格式")
+    db = SessionLocal()
+    qs = db.query(Question).filter(Question.paper_id == pid,
+                                   Question.status == 1).all()
+    matched = 0
+    for q in qs:
+        n = _qnum_of(q)
+        it = key.get(n)
+        if not it:
+            continue
+        q.answer = it["answer"]
+        if it.get("explanation"):
+            q.explanation = it["explanation"][:4000]
+        matched += 1
+    db.flush()   # autoflush=False:先把答案写进事务,下面的统计才数得到
+    p = db.get(Paper, pid)
+    p.answer_count = db.query(Question).filter(Question.paper_id == pid,
+                                               Question.status == 1,
+                                               Question.answer != "").count()
+    db.commit()
+    ac = p.answer_count
+    db.close()
+    return {"ok": True, "parsed": len(key), "matched": matched, "answer_count": ac}
+
+
+# ============ 全国考试日历 ============
+@app.get("/api/exams")
+def exams_list(u: User = Depends(auth.current_user)):
+    db = SessionLocal()
+    rows = db.query(ExamInfo).all()
+    db.close()
+    # 全国置顶,其余按省份分组;有具体日期的排前面
+    rows.sort(key=lambda e: (e.region != "全国", e.region, e.exam_date or "9999"))
+    out = [{"id": e.id, "region": e.region, "exam_type": e.exam_type, "name": e.name,
+            "signup_start": e.signup_start, "signup_end": e.signup_end,
+            "exam_date": e.exam_date, "announce_url": e.announce_url,
+            "note": e.note, "origin": e.origin,
+            "updated": e.updated_at.strftime("%Y-%m-%d") if e.updated_at else ""}
+           for e in rows]
+    return {"count": len(out), "items": out}
+
+
+@app.post("/api/admin/exams")
+def exam_save(eid: int = Form(0), region: str = Form(...), name: str = Form(...),
+              exam_type: str = Form("省考"), signup_start: str = Form(""),
+              signup_end: str = Form(""), exam_date: str = Form(""),
+              announce_url: str = Form(""), note: str = Form(""),
+              admin: User = Depends(auth.require_admin)):
+    """手动新增/修正一条考试信息。"""
+    for d in (signup_start, signup_end, exam_date):
+        if d and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", d):
+            raise HTTPException(400, "日期格式须为 YYYY-MM-DD")
+    db = SessionLocal()
+    row = db.get(ExamInfo, eid) if eid else None
+    if not row:
+        row = ExamInfo(region=region.strip()[:32], name=name.strip()[:128])
+        db.add(row)
+    row.region, row.name = region.strip()[:32], name.strip()[:128]
+    row.exam_type = exam_type.strip()[:32]
+    row.signup_start, row.signup_end, row.exam_date = signup_start, signup_end, exam_date
+    row.announce_url, row.note = announce_url.strip()[:512], note.strip()[:255]
+    row.origin = "手动"
+    row.updated_at = datetime.now()
+    db.commit()
+    db.close()
+    _audit(admin.id, "改考试日历", name[:64])
+    return {"ok": True}
+
+
+@app.post("/api/admin/exams/fetch")
+def exam_fetch(admin: User = Depends(auth.require_admin)):
+    """一键自动获取:抓公开信息源 + AI 提取,合并进考试日历。"""
+    r = exams.fetch_and_update()
+    _audit(admin.id, "抓取考试日历",
+           f"+{r['added']} 改{r['updated']} 错{len(r['errors'])}")
+    return r
+
+
+# ============ 邀请码(管理员) ============
+@app.get("/api/admin/invites")
+def invites_list(admin: User = Depends(auth.require_admin)):
+    db = SessionLocal()
+    rows = db.query(InviteCode).order_by(InviteCode.id.desc()).all()
+    out = [{"id": r.id, "code": r.code, "max_uses": r.max_uses,
+            "used_count": r.used_count, "enabled": r.enabled, "note": r.note,
+            "date": r.created_at.strftime("%Y-%m-%d") if r.created_at else ""}
+           for r in rows]
+    db.close()
+    return {"items": out, "invite_required": bool(config.INVITE_REQUIRED)}
+
+
+@app.post("/api/admin/invites")
+def invite_create(code: str = Form(""), max_uses: int = Form(10),
+                  note: str = Form(""), admin: User = Depends(auth.require_admin)):
+    """生成邀请码。code 留空自动生成;max_uses 即该码可注册人数。"""
+    code = code.strip()[:32]
+    if code and not re.fullmatch(r"[A-Za-z0-9_-]{4,32}", code):
+        raise HTTPException(400, "邀请码4~32位,仅限字母数字-_")
+    if not code:
+        import secrets
+        code = secrets.token_hex(4).upper()
+    if not (1 <= max_uses <= 10000):
+        raise HTTPException(400, "人数限制须在 1~10000")
+    db = SessionLocal()
+    if db.query(InviteCode).filter(InviteCode.code == code).first():
+        db.close()
+        raise HTTPException(409, "该邀请码已存在")
+    db.add(InviteCode(code=code, max_uses=max_uses, note=note.strip()[:128],
+                      created_by=admin.id))
+    db.commit()
+    db.close()
+    _audit(admin.id, "生成邀请码", f"{code}(限{max_uses}人)")
+    return {"ok": True, "code": code}
+
+
+@app.post("/api/admin/invites/{iid}/toggle")
+def invite_toggle(iid: int, admin: User = Depends(auth.require_admin)):
+    db = SessionLocal()
+    r = db.get(InviteCode, iid)
+    if not r:
+        db.close()
+        raise HTTPException(404, "邀请码不存在")
+    r.enabled = 0 if r.enabled else 1
+    en = r.enabled
+    db.commit()
+    db.close()
+    _audit(admin.id, "启停邀请码", f"#{iid} -> {en}")
+    return {"ok": True, "enabled": en}
+
+
+@app.delete("/api/admin/invites/{iid}")
+def invite_delete(iid: int, admin: User = Depends(auth.require_admin)):
+    db = SessionLocal()
+    r = db.get(InviteCode, iid)
+    if r:
+        db.delete(r)
+        db.commit()
+    db.close()
+    _audit(admin.id, "删邀请码", f"#{iid}")
+    return {"ok": True}
 
 
 # ============ 错题本/收藏(登录用户) ============
@@ -811,7 +1101,8 @@ def get_settings(admin: User = Depends(auth.require_admin)):
     """当前运行配置(敏感值只露尾4位)。来源:管理面板改过的存库,否则用 .env。"""
     out = []
     for skey, (attr, secret) in RUNTIME_SETTINGS.items():
-        val = getattr(config, attr, "") or ""
+        val = getattr(config, attr, "")
+        val = str(val).lower() if isinstance(val, bool) else (val or "")
         shown = (("****" + val[-4:]) if len(val) > 4 else ("已设置" if val else "")) \
             if secret else val
         out.append({"key": skey, "value": shown, "set": bool(val), "secret": secret})
@@ -840,6 +1131,108 @@ def save_setting(skey: str = Form(...), sval: str = Form(...),
     _apply_setting(skey, sval)
     _audit(admin.id, "改配置", skey)     # 只记键名,不记密钥内容
     return {"ok": True}
+
+
+# ============ AI 渠道管理(多 API 自动故障切换) ============
+def _mask_key(k: str) -> str:
+    return ("****" + k[-4:]) if len(k or "") > 4 else ("已设置" if k else "")
+
+
+@app.get("/api/admin/channels")
+def list_channels(admin: User = Depends(auth.require_admin)):
+    """渠道列表(key 只露尾4位)。按优先级排序,小的先用。"""
+    db = SessionLocal()
+    rows = db.query(AiChannel).order_by(AiChannel.priority, AiChannel.id).all()
+    out = [{"id": r.id, "name": r.name, "base_url": r.base_url, "model": r.model,
+            "api_key": _mask_key(r.api_key), "enabled": r.enabled,
+            "priority": r.priority, "fail_count": r.fail_count,
+            "last_error": r.last_error} for r in rows]
+    db.close()
+    return {"items": out}
+
+
+@app.post("/api/admin/channels")
+def save_channel(cid: int = Form(0), name: str = Form(...),
+                 base_url: str = Form(...), model: str = Form(...),
+                 api_key: str = Form(""), priority: int = Form(10),
+                 admin: User = Depends(auth.require_admin)):
+    """新增/编辑渠道。编辑时 api_key 留空表示不改。"""
+    name, base_url, model = name.strip(), base_url.strip().rstrip("/"), model.strip()
+    api_key = api_key.strip()
+    if not (name and base_url and model):
+        raise HTTPException(400, "名称/地址/模型不能为空")
+    if not base_url.startswith(("http://", "https://")):
+        raise HTTPException(400, "服务地址须以 http(s):// 开头")
+    db = SessionLocal()
+    if cid:
+        row = db.get(AiChannel, cid)
+        if not row:
+            db.close()
+            raise HTTPException(404, "渠道不存在")
+        row.name, row.base_url, row.model, row.priority = name, base_url, model, priority
+        if api_key:
+            row.api_key = api_key
+    else:
+        if not api_key:
+            db.close()
+            raise HTTPException(400, "新渠道必须填 API Key")
+        row = AiChannel(name=name, base_url=base_url, model=model,
+                        api_key=api_key, priority=priority)
+        db.add(row)
+    db.commit()
+    rid = row.id
+    db.close()
+    ai.reload_channels()
+    _audit(admin.id, "改AI渠道", f"#{rid} {name}")   # 只记名称,不记密钥
+    return {"ok": True, "id": rid}
+
+
+@app.post("/api/admin/channels/{cid}/toggle")
+def toggle_channel(cid: int, admin: User = Depends(auth.require_admin)):
+    db = SessionLocal()
+    row = db.get(AiChannel, cid)
+    if not row:
+        db.close()
+        raise HTTPException(404, "渠道不存在")
+    row.enabled = 0 if row.enabled else 1
+    en = row.enabled
+    db.commit()
+    db.close()
+    ai.reload_channels()
+    _audit(admin.id, "启停AI渠道", f"#{cid} -> {en}")
+    return {"ok": True, "enabled": en}
+
+
+@app.delete("/api/admin/channels/{cid}")
+def delete_channel(cid: int, admin: User = Depends(auth.require_admin)):
+    db = SessionLocal()
+    row = db.get(AiChannel, cid)
+    if row:
+        db.delete(row)
+        db.commit()
+    db.close()
+    ai.reload_channels()
+    _audit(admin.id, "删AI渠道", f"#{cid}")
+    return {"ok": True}
+
+
+@app.post("/api/admin/channels/{cid}/test")
+def test_channel(cid: int, admin: User = Depends(auth.require_admin)):
+    """连通性测试:真实调一次最小请求,顺便清零失败计数。"""
+    db = SessionLocal()
+    row = db.get(AiChannel, cid)
+    if not row:
+        db.close()
+        raise HTTPException(404, "渠道不存在")
+    ok, msg = ai.test_channel(row.base_url, row.api_key, row.model)
+    if ok:
+        row.fail_count = 0
+        row.last_error = ""
+    else:
+        row.last_error = msg
+    db.commit()
+    db.close()
+    return {"ok": ok, "msg": msg}
 
 
 @app.get("/api/admin/metrics")

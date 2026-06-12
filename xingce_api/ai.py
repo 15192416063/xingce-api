@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
-"""AI 能力:DeepSeek 切题/分类/考点 + 本地 bge 向量。逻辑沿用已验证的 app主程序。"""
+"""AI 能力:LLM 切题/分类/考点 + bge 向量。
+LLM 走多渠道(ai_channel 表,管理面板可配),按优先级自动故障切换;
+没配渠道时退回 .env 的 DEEPSEEK_API_KEY 单渠道,老部署零改动可用。"""
 import re
 import json
+import time
 import functools
 import config
 import stats
@@ -12,21 +15,96 @@ import stats
 def _llm():
     from langchain_openai import ChatOpenAI
     if not config.DEEPSEEK_API_KEY:
-        raise RuntimeError("未配置 DEEPSEEK_API_KEY,无法切题/分类")
+        raise RuntimeError("未配置 AI 渠道(管理面板添加)或 DEEPSEEK_API_KEY")
     return ChatOpenAI(model=config.LLM_MODEL, temperature=0,
                       api_key=config.DEEPSEEK_API_KEY,
                       base_url=config.DEEPSEEK_BASE_URL, timeout=60)
 
 
-def _invoke(messages):
-    """统一 LLM 入口:调用 + token 记账(成本全部进统计面板)。"""
-    resp = _llm().invoke(messages)
+# ---------- 多渠道:按优先级排队,坏了自动换下一个 ----------
+_CH_CACHE = {"ts": 0.0, "items": None}   # 渠道列表缓存(60s 或管理员改动时刷新)
+_CLIENTS = {}                            # (base_url, key, model) -> ChatOpenAI
+
+
+def reload_channels():
+    """管理面板增删改渠道后调用:下次请求重读数据库。"""
+    _CH_CACHE["items"] = None
+    _CLIENTS.clear()
+
+
+def _channels():
+    if _CH_CACHE["items"] is None or time.time() - _CH_CACHE["ts"] > 60:
+        from db import SessionLocal, AiChannel
+        db = SessionLocal()
+        rows = (db.query(AiChannel)
+                .filter(AiChannel.enabled == 1, AiChannel.api_key != "")
+                .order_by(AiChannel.priority, AiChannel.id).all())
+        _CH_CACHE["items"] = [{"id": r.id, "name": r.name, "base_url": r.base_url,
+                               "api_key": r.api_key, "model": r.model} for r in rows]
+        _CH_CACHE["ts"] = time.time()
+        db.close()
+    return _CH_CACHE["items"]
+
+
+def _client(ch):
+    key = (ch["base_url"], ch["api_key"], ch["model"])
+    if key not in _CLIENTS:
+        from langchain_openai import ChatOpenAI
+        _CLIENTS[key] = ChatOpenAI(model=ch["model"], temperature=0,
+                                   api_key=ch["api_key"],
+                                   base_url=ch["base_url"], timeout=60)
+    return _CLIENTS[key]
+
+
+def _mark_fail(ch_id, err):
+    try:
+        from db import SessionLocal, AiChannel
+        db = SessionLocal()
+        row = db.get(AiChannel, ch_id)
+        if row:
+            row.fail_count += 1
+            row.last_error = str(err)[:255]
+            db.commit()
+        db.close()
+    except Exception:
+        pass
+
+
+def _record(resp):
     try:
         u = getattr(resp, "usage_metadata", None) or {}
         stats.record_tokens(u.get("input_tokens", 0), u.get("output_tokens", 0))
     except Exception:
         pass
     return resp.content
+
+
+def _invoke(messages):
+    """统一 LLM 入口:按优先级逐渠道尝试 + token 记账。"""
+    chans = _channels()
+    if not chans:
+        return _record(_llm().invoke(messages))   # 兼容:没配渠道走 .env
+    last_err = None
+    for ch in chans:
+        try:
+            return _record(_client(ch).invoke(messages))
+        except Exception as e:
+            last_err = e
+            _mark_fail(ch["id"], e)
+    raise RuntimeError(f"所有 AI 渠道均不可用,最后错误:{last_err}")
+
+
+def test_channel(base_url, api_key, model):
+    """管理面板「测试」按钮:发一条最小消息,返回(是否成功, 耗时ms/错误)。"""
+    from langchain_openai import ChatOpenAI
+    t0 = time.time()
+    try:
+        c = ChatOpenAI(model=model, temperature=0, api_key=api_key,
+                       base_url=base_url, timeout=20, max_completion_tokens=8)
+        c.invoke("回复OK")
+        return True, f"{int((time.time() - t0) * 1000)}ms"
+    except Exception as e:
+        return False, str(e)[:200]
 
 
 # ---------- embedding(带查询缓存:同样的话不重复花钱) ----------
@@ -80,20 +158,24 @@ def _parse_json(resp):
 
 
 def split_questions(text, progress_cb=None):
-    """返回 [{content, type}],跳过被截断的题。"""
+    """返回 [{content, type, qnum}],跳过被截断的题。输入已是 Markdown(版面更干净)。"""
     all_qs, batches = [], _split_batches(text)
     for i, batch in enumerate(batches):
-        prompt = f"""你是行测试卷解析专家。下面是一份行测试卷的一段文字(可能从中间截断)。
-请把其中**完整的**单道题目提取出来,每道题包含题干和它的所有选项。
-注意:题号可能在行首(如"1 "、"1."、"1、"),也可能漂在题干中;选项标记可能是"A."或"A、"。
-要求:
-1. 只提取完整的题(题干+选项齐全),被截断的忽略。
-2. 判断题型,type 只能填:言语理解/常识判断/类比推理/逻辑判断/数量关系/资料分析/图形推理/其他
-3. 图形推理题也标出来,type填"图形推理"
-4. 申论、材料写作不要提取
-5. 只输出JSON数组,不要任何解释:
-[{{"content": "完整题目原文", "type": "题型"}}]
-试卷文字:
+        prompt = f"""你是行测试卷切题专家。下面是行测试卷的 Markdown 片段(可能从中间截断)。
+把其中**完整的**单道题提取出来。每道题输出三个字段:
+- qnum: 题号(整数,找不到填0)
+- content: 题目内容,必须**干净利落**:
+  * 第一行是题干(去掉题号、页眉页脚、"第X页"、网址水印、Markdown标记如#*|)
+  * 之后每个选项独占一行,统一写成 "A. 内容" 格式(B/C/D同)
+  * 修复 PDF 换行导致的断句,删除多余空格;不加任何你自己的话
+- type: 言语理解/常识判断/类比推理/逻辑判断/定义判断/数量关系/资料分析/图形推理/其他
+
+规则:
+1. 只提取完整的题(题干+选项齐全),开头/结尾被截断的忽略
+2. 申论、材料写作、大段给定资料不提取
+3. 只输出JSON数组,无任何解释:
+[{{"qnum": 1, "content": "题干\\nA. …\\nB. …\\nC. …\\nD. …", "type": "题型"}}]
+试卷片段:
 {batch}
 JSON:"""
         try:
@@ -110,6 +192,40 @@ JSON:"""
             seen.add(key)
             res.append(q)
     return res
+
+
+def parse_answer_key(text: str) -> dict:
+    """从答案文本(粘贴或答案 PDF 提取)解析「题号→{answer, explanation}」映射。
+    支持「1-5 ABCDA」「1.A 2.B」「1.【答案】A 解析:…」等常见排版。"""
+    out = {}
+    # 先本地解析最常见的紧凑排版(免 token):「1-5 ABCDA」与「1.A」
+    for m in re.finditer(r'(\d{1,3})\s*[-—~至]\s*(\d{1,3})[::\s]+([A-D]{2,})', text):
+        a, b, letters = int(m.group(1)), int(m.group(2)), m.group(3)
+        if b - a + 1 == len(letters):
+            for k, ch in enumerate(letters):
+                out[a + k] = {"answer": ch, "explanation": ""}
+    for m in re.finditer(r'(?<![-\d])(\d{1,3})\s*[\.、．::]\s*([A-D])(?![A-Z])', text):
+        out.setdefault(int(m.group(1)), {"answer": m.group(2), "explanation": ""})
+    if out:
+        return out
+    # 本地解析不出来(带解析的长文档)→ 分批让 LLM 提取
+    for batch in _split_batches(text, batch_size=4000, overlap=100):
+        prompt = f"""下面是行测答案/解析文档片段。提取每道题的题号、正确答案(A-D单字母)、
+解析(没有就留空,有就保留原文、删页眉页脚)。只输出JSON数组,无解释:
+[{{"qnum": 1, "answer": "A", "explanation": ""}}]
+文档片段:
+{batch}
+JSON:"""
+        try:
+            for it in _parse_json(_invoke(prompt)):
+                n = int(it.get("qnum", 0) or 0)
+                a = (it.get("answer") or "").strip().upper()[:1]
+                if n and a in "ABCD":
+                    out.setdefault(n, {"answer": a,
+                                       "explanation": (it.get("explanation") or "").strip()})
+        except Exception:
+            pass
+    return out
 
 
 # ---------- 分类+考点提炼(一次调用拿结构化结果) ----------
