@@ -28,12 +28,14 @@ rm -rf seed && unzip -o public_seed_*.zip -d seed
 
 echo ">> 激活环境(若有 venv)"
 [ -d venv ] && source venv/bin/activate || true
+PY=$(command -v python || command -v python3)
+echo ">> 使用 Python: $PY"
 
 echo ">> 导入公共题(自动去重,可重复跑)"
-python import_public.py seed
+"$PY" import_public.py seed
 
 echo ">> 用本机 embedding 重建全部向量"
-python reembed.py
+"$PY" reembed.py
 
 echo ">> 重启服务"
 sudo systemctl restart xingce
