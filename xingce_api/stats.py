@@ -5,7 +5,7 @@ import time
 import threading
 from datetime import date
 
-from db import SessionLocal, StatDaily, VisitDay
+from db import SessionLocal, StatDaily, VisitDay, TokenStat
 
 _lock = threading.Lock()
 ONLINE = {}           # user_id -> 最后活跃时间戳
@@ -68,6 +68,28 @@ def record_chat():
     _bump(chat_count=1)
 
 
-def record_tokens(tokens_in: int, tokens_out: int):
-    if tokens_in or tokens_out:
-        _bump(tokens_in=int(tokens_in), tokens_out=int(tokens_out))
+def record_tokens(tokens_in: int, tokens_out: int,
+                  scene: str = "其他", channel: str = ""):
+    """记 token 消耗:总量进 StatDaily(面板看总成本),
+    同时按 (日, 用途, 渠道) 进 TokenStat(面板看「钱花在哪、哪个渠道花的」)。"""
+    tin, tout = int(tokens_in or 0), int(tokens_out or 0)
+    if not (tin or tout):
+        return
+    _bump(tokens_in=tin, tokens_out=tout)
+    try:
+        with _lock:
+            db = SessionLocal()
+            day = _today()
+            row = (db.query(TokenStat)
+                   .filter(TokenStat.day == day, TokenStat.scene == scene,
+                           TokenStat.channel == channel).first())
+            if not row:
+                row = TokenStat(day=day, scene=scene, channel=channel)
+                db.add(row)
+            row.calls = (row.calls or 0) + 1
+            row.tokens_in = (row.tokens_in or 0) + tin
+            row.tokens_out = (row.tokens_out or 0) + tout
+            db.commit()
+            db.close()
+    except Exception:
+        pass

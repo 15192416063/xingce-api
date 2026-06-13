@@ -276,6 +276,20 @@ class VisitDay(Base):
     day: Mapped[str] = mapped_column(String(10), index=True)
 
 
+class TokenStat(Base):
+    """Token 分账:按 (日, 用途场景, 渠道) 聚合,运营面板看「钱花在哪」。
+    scene: 对话/AI解题/题目分类/批量入库分类/PDF切题/答案解析/扫描OCR/向量检索 等
+    channel: 命中的渠道名(如 DeepSeek、硅基流动-bge);.env 兜底记为「DeepSeek(.env)」"""
+    __tablename__ = "token_stat"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    day: Mapped[str] = mapped_column(String(10), index=True)       # YYYY-MM-DD
+    scene: Mapped[str] = mapped_column(String(32), default="其他", index=True)
+    channel: Mapped[str] = mapped_column(String(64), default="")
+    calls: Mapped[int] = mapped_column(Integer, default=0)         # 调用次数
+    tokens_in: Mapped[int] = mapped_column(Integer, default=0)
+    tokens_out: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class News(Base):
     """考试资讯/公告(管理员发布,用户可见)"""
     __tablename__ = "news"
@@ -317,6 +331,23 @@ def _migrate():
                         f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {coltype}{default}'))
             except Exception:
                 pass
+    # 旧版会员体系遗留的 NOT NULL 列(新模型已删除):
+    # INSERT 不再提供这些列的值,不删掉会导致注册报 NOT NULL constraint failed
+    legacy = {"user": ("membership_level", "membership_expire")}
+    for tname, cols in legacy.items():
+        if tname not in tables:
+            continue
+        have = {c["name"] for c in insp.get_columns(tname)}
+        model_cols = {c.name for c in Base.metadata.tables[tname].columns} \
+            if tname in Base.metadata.tables else set()
+        for cname in cols:
+            if cname in have and cname not in model_cols:
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(text(
+                            f'ALTER TABLE "{tname}" DROP COLUMN "{cname}"'))
+                except Exception:
+                    pass
 
 
 def _backfill_papers():

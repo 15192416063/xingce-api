@@ -71,24 +71,25 @@ def _mark_fail(ch_id, err):
         pass
 
 
-def _record(resp):
+def _record(resp, scene="其他", channel=""):
     try:
         u = getattr(resp, "usage_metadata", None) or {}
-        stats.record_tokens(u.get("input_tokens", 0), u.get("output_tokens", 0))
+        stats.record_tokens(u.get("input_tokens", 0), u.get("output_tokens", 0),
+                            scene=scene, channel=channel)
     except Exception:
         pass
     return resp.content
 
 
-def _invoke(messages):
-    """统一 LLM 入口:按优先级逐渠道尝试 + token 记账。"""
+def _invoke(messages, scene="其他"):
+    """统一 LLM 入口:按优先级逐渠道尝试 + token 分账(用途+渠道)。"""
     chans = _channels()
     if not chans:
-        return _record(_llm().invoke(messages))   # 兼容:没配渠道走 .env
+        return _record(_llm().invoke(messages), scene, "DeepSeek(.env)")  # .env 兜底
     last_err = None
     for ch in chans:
         try:
-            return _record(_client(ch).invoke(messages))
+            return _record(_client(ch).invoke(messages), scene, ch["name"])
         except Exception as e:
             last_err = e
             _mark_fail(ch["id"], e)
@@ -123,7 +124,8 @@ def ocr_page(png_bytes: bytes) -> str:
             data = r.json()
             u = data.get("usage") or {}
             stats.record_tokens(u.get("prompt_tokens", 0),
-                                u.get("completion_tokens", 0))
+                                u.get("completion_tokens", 0),
+                                scene="扫描OCR", channel=ch["name"])
             return data["choices"][0]["message"]["content"] or ""
         except Exception as e:
             last_err = e
@@ -164,7 +166,14 @@ def embed(text: str):
         json={"model": config.EMBED_MODEL, "input": key},
         timeout=30)
     r.raise_for_status()
-    vec = r.json()["data"][0]["embedding"]
+    data = r.json()
+    vec = data["data"][0]["embedding"]
+    try:
+        u = data.get("usage") or {}
+        stats.record_tokens(u.get("prompt_tokens", 0) or u.get("total_tokens", 0), 0,
+                            scene="向量检索", channel="embedding:" + config.EMBED_MODEL)
+    except Exception:
+        pass
     if len(_EMBED_CACHE) >= _EMBED_CACHE_MAX:
         _EMBED_CACHE.pop(next(iter(_EMBED_CACHE)))
     _EMBED_CACHE[key] = vec
@@ -237,7 +246,7 @@ def split_questions(text, progress_cb=None):
 {batch}
 JSON:"""
         try:
-            all_qs.extend(_parse_json(_invoke(prompt)))
+            all_qs.extend(_parse_json(_invoke(prompt, scene="PDF切题")))
         except Exception:
             pass
         if progress_cb:
@@ -275,7 +284,7 @@ def parse_answer_key(text: str) -> dict:
 {batch}
 JSON:"""
         try:
-            for it in _parse_json(_invoke(prompt)):
+            for it in _parse_json(_invoke(prompt, scene="答案解析")):
                 n = int(it.get("qnum", 0) or 0)
                 a = (it.get("answer") or "").strip().upper()[:1]
                 if n and a in "ABCD":
@@ -320,7 +329,7 @@ l1只能选:{L1}
 l2/l3参考:{FINE_TAXONOMY}
 题目:{content}"""
     try:
-        data = json.loads(_invoke(prompt)
+        data = json.loads(_invoke(prompt, scene="题目分类")
                           .replace("```json", "").replace("```", "").strip())
     except Exception:
         data = {}
@@ -345,7 +354,7 @@ l2/l3参考:{FINE_TAXONOMY}
 JSON:"""
     by_i = {}
     try:
-        for k, d in enumerate(_parse_json(_invoke(prompt))):
+        for k, d in enumerate(_parse_json(_invoke(prompt, scene="批量入库分类"))):
             if isinstance(d, dict):
                 try:
                     idx = int(d.get("i", k + 1) or (k + 1)) - 1
@@ -410,7 +419,7 @@ answer 只能是 A/B/C/D 单字母;若题目信息不足或你无法确定,answe
 {mat}【题目】{content[:2500]}
 JSON:"""
     try:
-        resp = _invoke(prompt).replace("```json", "").replace("```", "").strip()
+        resp = _invoke(prompt, scene="AI解题").replace("```json", "").replace("```", "").strip()
         try:
             data = json.loads(resp)
         except json.JSONDecodeError:
@@ -428,13 +437,17 @@ def chat(message: str, history=None) -> str:
     msgs = [{"role": "system",
              "content": "你是专业的行测辅导老师。回答简洁、实用,善于分析题目考点、"
                         "讲解解题方法与技巧。涉及具体题目时先点明题型与考点,再给思路。"
-                        "不要长篇大论,控制在200字内。"}]
+                        "不要长篇大论,控制在200字内。"
+                        "重要:绝不要在回复里自己编写、列出或罗列完整的练习题或选项"
+                        "(A/B/C/D 等)。当用户想做题时,系统会自动从真实题库调取带图真题"
+                        "展示在你的回复下方;你只需用一两句话说明将为他推荐哪类题、"
+                        "提示考点或方法即可,把题目本身交给系统展示。"}]
     # 历史只带最近4条、每条截600字——再多对答疑帮助很小,token 白烧
     for h in (history or [])[-4:]:
         if h.get("role") in ("user", "assistant") and h.get("content"):
             msgs.append({"role": h["role"], "content": h["content"][:600]})
     msgs.append({"role": "user", "content": message[:2000]})
     try:
-        return _invoke(msgs).strip()
+        return _invoke(msgs, scene="对话").strip()
     except Exception as e:
         return f"(AI 暂时不可用:{e})"

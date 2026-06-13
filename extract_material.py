@@ -22,7 +22,9 @@ import extract_graphics as eg  # 复用题号检测/真图形判定
 
 SECTION_RE = re.compile(r'资料分析')
 CHART_GAP = 50          # 同页图表竖向间隔 > 此值则视为两个材料簇
-PAD = 6
+PAD = 6                 # 选项图四周留白
+CHART_PAD_X = 30        # 材料图表左右留白:纵轴数值标签在图形框外,要多留
+CHART_PAD_Y = 26        # 材料图表上下留白:柱顶数值/横轴类目标签也在框外
 
 
 def _find_section(doc):
@@ -42,21 +44,27 @@ def _find_section(doc):
 
 
 def _chart_clusters(page, y_from, y_to):
-    """页内 [y_from,y_to] 的真图形,按竖向聚簇,返回 [(y_top, rect_union), ...]"""
+    """页内 [y_from,y_to] 的真图形,按竖向聚簇,返回 [(y_top, rect_union), ...]
+    页眉/页脚区域的对象(页码、水印、装饰)一律排除,否则会截出空白"图表"。"""
     pr = page.rect
     pw, ph = pr.width, pr.height
+    top, bot = ph * eg.HEADER_RATIO, ph * eg.FOOTER_RATIO
     rects = []
     for img in page.get_images(full=True):
         try:
             for r in page.get_image_rects(img[0]):
                 cy = (r.y0 + r.y1) / 2
-                if y_from <= cy <= y_to and eg._is_real_figure(r, pw, ph):
+                if y_from <= cy <= y_to and top < cy < bot \
+                        and eg._is_real_figure(r, pw, ph):
                     rects.append(r)
         except Exception:
             continue
     for dr in page.get_drawings():
         r = dr.get("rect")
-        if r and y_from <= (r.y0 + r.y1) / 2 <= y_to and eg._is_real_figure(r, pw, ph):
+        if r is None:
+            continue
+        cy = (r.y0 + r.y1) / 2
+        if y_from <= cy <= y_to and top < cy < bot and eg._is_real_figure(r, pw, ph):
             rects.append(r)
     if not rects:
         return []
@@ -98,6 +106,19 @@ def parse(pdf_path, out_dir, zoom=3):
     if not sec:
         return []
     sp, sy = sec
+
+    # 跨页噪声模板 + 每页噪声行缓存(渲染图表/选项图时抹掉页码/水印文字)
+    try:
+        _noise_set = eg._repeating_noise([doc[p].get_text() for p in range(len(doc))])
+    except Exception:
+        _noise_set = set()
+    _noise_cache = {}
+
+    def _page_noise(page):
+        k = page.number
+        if k not in _noise_cache:
+            _noise_cache[k] = eg._noise_line_rects(page, _noise_set)
+        return _noise_cache[k]
 
     # 1) 收集事件:小题 + 图表簇,按 (page,y) 阅读顺序
     events = []  # (page, y, kind, payload)
@@ -151,13 +172,15 @@ def parse(pdf_path, out_dir, zoom=3):
         # 图表裁剪
         for (pno, rect) in g["_chart_rects"]:
             page = doc[pno]; pr = page.rect
-            clip = fitz.Rect(max(0, rect.x0 - PAD), max(0, rect.y0 - PAD),
-                             min(pr.width, rect.x1 + PAD), min(pr.height, rect.y1 + PAD))
+            clip = fitz.Rect(max(0, rect.x0 - CHART_PAD_X),
+                             max(pr.height * eg.HEADER_RATIO, rect.y0 - CHART_PAD_Y),
+                             min(pr.width, rect.x1 + CHART_PAD_X),
+                             min(pr.height * eg.FOOTER_CLIP_RATIO, rect.y1 + CHART_PAD_Y))
             try:
-                pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=clip)
+                mask = [r for r in _page_noise(page) if r.intersects(clip)]
                 fn = os.path.join(out_dir, f"{base}_mat{gi+1}_p{pno+1}_{int(rect.y0)}.png")
-                pix.save(fn)
-                g["images"].append(fn)
+                if eg.save_crop(page, clip, fn, zoom, mask_rects=mask):
+                    g["images"].append(fn)
             except Exception:
                 pass
         # 材料文本:本组第一个事件位置 → 第一道小题位置
@@ -183,15 +206,16 @@ def parse(pdf_path, out_dir, zoom=3):
                 yt = y1 if pno == p1 else doc[pno].rect.height
                 for (cy, rect) in _chart_clusters(doc[pno], yf, yt):
                     page = doc[pno]; pr = page.rect
-                    clip = fitz.Rect(max(0, rect.x0 - PAD), max(0, rect.y0 - PAD),
+                    clip = fitz.Rect(max(0, rect.x0 - PAD),
+                                     max(pr.height * eg.HEADER_RATIO, rect.y0 - PAD),
                                      min(pr.width, rect.x1 + PAD),
-                                     min(pr.height, rect.y1 + PAD))
+                                     min(pr.height * eg.FOOTER_CLIP_RATIO, rect.y1 + PAD))
                     try:
-                        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=clip)
+                        mask = [r for r in _page_noise(page) if r.intersects(clip)]
                         fn = os.path.join(
                             out_dir, f"{base}_opt_q{s['qnum']}_p{pno+1}_{int(rect.y0)}.png")
-                        pix.save(fn)
-                        s["images"].append(fn)
+                        if eg.save_crop(page, clip, fn, zoom, mask_rects=mask):
+                            s["images"].append(fn)
                     except Exception:
                         pass
 
@@ -214,6 +238,10 @@ def parse(pdf_path, out_dir, zoom=3):
 
 if __name__ == "__main__":
     import sys
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     out = sys.argv[2] if len(sys.argv) > 2 else "material_out"
     gs = parse(sys.argv[1], out)
     print(f"共 {len(gs)} 个材料组:")

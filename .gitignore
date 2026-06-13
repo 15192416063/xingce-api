@@ -33,6 +33,11 @@ rag-env/
 *.tmp
 _tmp_*.png
 
+# 生成的种子包/日志(数据走 Release 上传,不进 git)
+seed_export/
+public_seed_*.zip
+*.log
+
 # 系统/编辑器
 .DS_Store
 .idea/

@@ -126,7 +126,7 @@ announce_url(公告链接,没有留空)。没提到的不要编造。只输出JS
 {text}
 JSON:"""
             try:
-                resp = ai._invoke(prompt)
+                resp = ai._invoke(prompt, scene="考试日历抓取")
                 items = json.loads(re.search(r'\[.*\]', resp.replace("```json", "")
                                              .replace("```", ""), re.DOTALL).group(0))
             except Exception as e:

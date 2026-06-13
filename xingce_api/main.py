@@ -28,7 +28,7 @@ import security
 from db import (init_db, SessionLocal, IngestionJob, Question, QuestionImage,
                 PracticeRecord, WrongBook, MaterialGroup, Favorite, User, News,
                 AiUsage, StatDaily, VisitDay, LoginLog, Setting, AuditLog, AiChannel,
-                Paper, InviteCode, ExamInfo, MockExam)
+                Paper, InviteCode, ExamInfo, MockExam, TokenStat)
 import exams
 
 # ---- 错误日志:轮转文件,排障不靠猜(稳定性) ----
@@ -744,36 +744,52 @@ def _vec_recommend(db, summary_or_text, uid, k=6, exclude=None):
     return out
 
 
-def _mine_first_recommend(db, c, msg, uid, k=6):
-    """推荐题目:优先从用户自己上传的私有题库里按题型精确调取,
-    再用向量检索补足(私库+公共库)。这是「上传PDF→对话调题」闭环的核心。"""
-    mine_scope = f"user:{uid}"
-    picked, seen = [], set()
-    # 1) 私库按分类直查(l2 优先,其次 l1)——用户问"图形推理"就先给他自己传的图形推理
-    qy = db.query(Question).filter(Question.scope == mine_scope, Question.status == 1)
+def _cat_fill(db, scopes, c, uid, picked, seen, k, match):
+    """按题型(l2 优先,其次 l1)从指定库直查真题补足推荐。
+    不依赖向量库——没配 embedding 也能调出带图的真题(对话调题的兜底主力)。"""
+    if len(picked) >= k:
+        return
+    qy = db.query(Question).filter(Question.status == 1, Question.scope.in_(scopes))
     if c.get("l2"):
-        mine_qs = qy.filter(Question.category_l2 == c["l2"]).limit(k).all()
+        qy = qy.filter(Question.category_l2 == c["l2"])
     elif c.get("l1"):
-        mine_qs = qy.filter(Question.category_l1 == c["l1"]).limit(k).all()
+        qy = qy.filter(Question.category_l1 == c["l1"])
     else:
-        mine_qs = []
-    random.shuffle(mine_qs)
-    for q in mine_qs[:max(2, k // 2)]:
+        return
+    pool = [q for q in qy.limit(200).all() if q.id not in seen]
+    random.shuffle(pool)
+    for q in pool[: k - len(picked)]:
         vo = _q_to_vo(q, db, user_id=uid)
-        vo["match"] = 1.0
+        vo["match"] = match
         picked.append(vo)
         seen.add(q.id)
-    # 2) 向量检索补足(覆盖私库+公共库,自然按相似度排)
-    hits = vectors.search(c.get("summary") or msg, ["public", mine_scope], k=k + len(seen))
-    for qid, dist in hits:
-        if qid in seen or len(picked) >= k:
-            continue
-        sq = db.get(Question, qid)
-        if sq and sq.status == 1:
-            vo = _q_to_vo(sq, db, user_id=uid)
-            vo["match"] = round(max(0.0, 1 - dist), 3)
-            picked.append(vo)
-            seen.add(qid)
+
+
+def _mine_first_recommend(db, c, msg, uid, k=6):
+    """推荐题目:① 私库按题型直查 → ② 向量检索补足 → ③ 公共库按题型兜底。
+    第③步保证「没配 embedding / 私库为空」时,对话依然能调出真题卡片(含图片),
+    而不是让 AI 在文字里临时编题。这是「上传PDF→对话调题」闭环的核心。"""
+    mine_scope = f"user:{uid}"
+    picked, seen = [], set()
+    # ① 私库按分类直查——用户问"图形推理"就先给他自己传的图形推理(最多占一半)
+    _cat_fill(db, [mine_scope], c, uid, picked, seen, max(2, k // 2), 1.0)
+    # ② 向量检索补足(配了 embedding 才有效;按语义相似度排)
+    try:
+        hits = vectors.search(c.get("summary") or msg, ["public", mine_scope],
+                              k=k + len(seen))
+        for qid, dist in hits:
+            if qid in seen or len(picked) >= k:
+                continue
+            sq = db.get(Question, qid)
+            if sq and sq.status == 1:
+                vo = _q_to_vo(sq, db, user_id=uid)
+                vo["match"] = round(max(0.0, 1 - dist), 3)
+                picked.append(vo)
+                seen.add(qid)
+    except Exception:
+        pass
+    # ③ 公共库按题型兜底(关键:embedding 没配也能出真题)
+    _cat_fill(db, ["public", mine_scope], c, uid, picked, seen, k, 0.6)
     return picked
 
 
@@ -883,7 +899,7 @@ async def mine_upload_pdf(background: BackgroundTasks, file: UploadFile = File(.
     db.close()
     if paper_count >= config.MINE_PAPER_CAP:
         raise HTTPException(402, f"已达套卷上限({config.MINE_PAPER_CAP}套),"
-                                 "可在「套卷题库」删除不用的卷后再传")
+                                 "可在首页「我的题库」点开旧卷删除后再传")
     if mine_count >= config.MINE_CAP:
         raise HTTPException(402, f"私有题库已达上限({config.MINE_CAP}题),请清理后再传")
     if running:
@@ -1559,10 +1575,32 @@ def admin_metrics(admin: User = Depends(auth.require_admin)):
     bad_ips = db.query(LoginLog.ip, func.count(LoginLog.id)) \
         .filter(LoginLog.ok == 0, LoginLog.created_at >= day0) \
         .group_by(LoginLog.ip).order_by(func.count(LoginLog.id).desc()).limit(5).all()
-    db.close()
 
     def _cost(tin, tout):
         return round((tin * config.PRICE_IN_PER_M + tout * config.PRICE_OUT_PER_M) / 1e6, 2)
+
+    # Token 分账:今日 & 累计,各按「用途场景」「渠道」聚合(钱花在哪一目了然)
+    def _token_breakdown(scope_filter):
+        by_scene = (db.query(TokenStat.scene,
+                             func.sum(TokenStat.calls), func.sum(TokenStat.tokens_in),
+                             func.sum(TokenStat.tokens_out))
+                    .filter(scope_filter).group_by(TokenStat.scene)
+                    .order_by(func.sum(TokenStat.tokens_in + TokenStat.tokens_out).desc()).all())
+        by_chan = (db.query(TokenStat.channel,
+                            func.sum(TokenStat.calls), func.sum(TokenStat.tokens_in),
+                            func.sum(TokenStat.tokens_out))
+                   .filter(scope_filter).group_by(TokenStat.channel)
+                   .order_by(func.sum(TokenStat.tokens_in + TokenStat.tokens_out).desc()).all())
+        mk = lambda rows, keyname: [
+            {keyname: (k or "其他"), "calls": int(c or 0),
+             "tokens_in": int(ti or 0), "tokens_out": int(to or 0),
+             "tokens": int((ti or 0) + (to or 0)), "cost": _cost(ti or 0, to or 0)}
+            for k, c, ti, to in rows]
+        return {"by_scene": mk(by_scene, "scene"), "by_channel": mk(by_chan, "channel")}
+
+    tokens_today = _token_breakdown(TokenStat.day == today)
+    tokens_total = _token_breakdown(TokenStat.day != "")
+    db.close()
 
     return {
         "online": opstats.online_count(),
@@ -1576,6 +1614,8 @@ def admin_metrics(admin: User = Depends(auth.require_admin)):
                   "tokens_out": tot[3], "cost": _cost(tot[2], tot[3]),
                   "users": users, "practice": practice_total},
         "bank": {"public": q_pub, "mine": q_mine},
+        "tokens_today": tokens_today,
+        "tokens_total": tokens_total,
         "security": {"login_fail_today": fail_today,
                      "locked_now": security.locked_count(),
                      "bad_ips": [{"ip": ip, "fails": n} for ip, n in bad_ips]},

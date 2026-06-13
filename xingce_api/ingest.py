@@ -209,11 +209,14 @@ def run(job_id: int):
             db.commit()
             qid = qe.id
             db.close()
-            vid = vectors.upsert(qid, c["summary"], scope, c["l2"])
-            db = SessionLocal()
-            db.get(Question, qid).vector_id = vid
-            db.commit()
-            db.close()
+            try:   # 向量化失败(如维度不匹配/网络)绝不能拖垮整卷入库
+                vid = vectors.upsert(qid, c["summary"], scope, c["l2"])
+                db = SessionLocal()
+                db.get(Question, qid).vector_id = vid
+                db.commit()
+                db.close()
+            except Exception:
+                pass
             _set(job_id, done_count=done, dup_count=dup,
                  progress=25 + int(done * 75 / max(total, 1)))
 
