@@ -23,8 +23,13 @@ else
   ls public_seed_*.zip >/dev/null 2>&1 || { echo "当前目录没有 public_seed_*.zip,退出。"; exit 1; }
 fi
 
-echo ">> 解压"
-rm -rf seed && unzip -o public_seed_*.zip -d seed
+echo ">> 解压(用 Python zipfile,免装 unzip)"
+rm -rf seed
+EXTRACT_PY=$(command -v python3 || command -v python)
+"$EXTRACT_PY" -c "import zipfile,glob; zipfile.ZipFile(sorted(glob.glob('public_seed_*.zip'))[-1]).extractall('seed')"
+if [ ! -f seed/public_seed.db ]; then
+  echo "解压失败:seed/public_seed.db 不存在"; exit 1
+fi
 
 echo ">> 激活环境(若有 venv)"
 [ -d venv ] && source venv/bin/activate || true
