@@ -31,11 +31,15 @@ def delete(question_id: int):
         pass
 
 
-def search(summary: str, scopes, k: int = 5, exclude_qid: int = None):
-    """按考点摘要找相似,scope 过滤(只在允许的库里找),返回 [(qid, distance)]"""
+def search(summary: str, scopes, k: int = 5, exclude_qid: int = None, l2: str = None):
+    """按考点摘要找相似;scope 过滤 + 可选题型(l2)过滤(避免图形推理串到资料分析)。
+    返回 [(qid, distance)]"""
     try:
         qvec = ai.embed(summary)
-        where = {"scope": {"$in": list(scopes)}}
+        cond = [{"scope": {"$in": list(scopes)}}]
+        if l2:
+            cond.append({"l2": l2})
+        where = cond[0] if len(cond) == 1 else {"$and": cond}
         res = _collection().query(query_embeddings=[qvec],
                                   n_results=k + 3, where=where)
     except Exception:

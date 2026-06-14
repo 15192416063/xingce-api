@@ -560,8 +560,9 @@ def similar(question_id: int, k: int = 5, u: User = Depends(auth.current_user)):
     if not q:
         db.close()
         raise HTTPException(404, "题不存在")
+    # 找相似只在同题型内找(图形推理不串到资料分析等)
     hits = vectors.search(q.topic_summary, ["public", f"user:{u.id}"],
-                          k=k, exclude_qid=question_id)
+                          k=k, exclude_qid=question_id, l2=q.category_l2)
     out = []
     for qid, dist in hits:
         sq = db.get(Question, qid)
@@ -731,9 +732,9 @@ def mock_history(u: User = Depends(auth.current_user)):
 
 
 # ============ AI 智能找题 / 对话 / 上传自己的题(核心卖点) ============
-def _vec_recommend(db, summary_or_text, uid, k=6, exclude=None):
+def _vec_recommend(db, summary_or_text, uid, k=6, exclude=None, l2=None):
     hits = vectors.search(summary_or_text, ["public", f"user:{uid}"],
-                          k=k, exclude_qid=exclude)
+                          k=k, exclude_qid=exclude, l2=l2)
     out = []
     for qid, dist in hits:
         sq = db.get(Question, qid)
@@ -776,7 +777,7 @@ def _mine_first_recommend(db, c, msg, uid, k=6):
     # ② 向量检索补足(配了 embedding 才有效;按语义相似度排)
     try:
         hits = vectors.search(c.get("summary") or msg, ["public", mine_scope],
-                              k=k + len(seen))
+                              k=k + len(seen), l2=c.get("l2"))
         for qid, dist in hits:
             if qid in seen or len(picked) >= k:
                 continue
@@ -843,7 +844,7 @@ def mine_add(content: str = Form(...), u: User = Depends(auth.current_user)):
         db.commit()
     except Exception:
         pass
-    items = _vec_recommend(db, c["summary"], u.id, k=8, exclude=qid)
+    items = _vec_recommend(db, c["summary"], u.id, k=8, exclude=qid, l2=c.get("l2"))
     db.close()
     return {"saved_id": qid, "analysis": {"l1": c["l1"], "l2": c["l2"],
             "l3": c.get("l3", ""), "kp": c["kp"]}, "count": len(items), "items": items}

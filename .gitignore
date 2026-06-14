@@ -37,6 +37,9 @@ _tmp_*.png
 seed_export/
 public_seed_*.zip
 *.log
+# 数据库备份(切换/迁移时生成,绝不进 git)
+*.bak*
+*.db.bak*
 
 # 系统/编辑器
 .DS_Store

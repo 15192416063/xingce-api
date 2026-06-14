@@ -89,6 +89,75 @@ def _noise_line_rects(page, noise_set=None):
     return out
 
 
+# 题干 / 文字型选项 / 成句散文 的特征(这些都不该进图,统一涂白)
+_STEM_RE = re.compile(r'^\s*\d{1,3}\s*[.、．]')          # 行首题号 = 题干
+_OPT_RE = re.compile(r'^\s*[A-DＡ-Ｄ]\s*[.、．]')          # 行首 A./B./C./D. = 选项
+_MATLBL_RE = re.compile(r'^\s*[（(][一二三四五六七八九十]+[)）]\s*$')  # 独占行的材料组标号(二)
+_CJK_RE = re.compile(r'[一-鿿]')
+
+
+# 资料分析/材料段的"分界行":图形题带不能越过它,否则会把下游材料的图(饼图等)并进来
+_SECTION_RE = [
+    re.compile(r'根据.{0,14}(图|表|资料|材料|数据|统计|文字|信息).{0,10}(回答|完成|作答)'),
+    re.compile(r'资料分析'),
+    re.compile(r'^\s*[（(][一二三四五六七八九十]+[)）]'),       # 材料组标号 (一)(二)
+    re.compile(r'^\s*[一二三四五六七八九十]\s*[、.]\s*(资料|给定资料)'),
+]
+
+
+def _section_cut_y(page, y0, y1):
+    """带内若出现"资料分析/材料"分界行,返回其 y(用于截断图形题带,挡住下游材料图)。"""
+    try:
+        d = page.get_text("dict")
+    except Exception:
+        return None
+    best = None
+    for b in d.get("blocks", []):
+        for ln in b.get("lines", []):
+            ly = ln["bbox"][1]
+            if not (y0 < ly < y1):
+                continue
+            txt = "".join(s["text"] for s in ln.get("spans", [])).strip()
+            if any(p.search(txt) for p in _SECTION_RE):
+                if best is None or ly < best:
+                    best = ly
+    return best
+
+
+def _text_mask_rects(page, clip):
+    """clip 内"应涂白的文字行"包围盒:题干、文字型选项(A.xxx 含汉字/数字)、成句散文。
+    保留:坐标轴/数值标签、图内短标签、以及图形推理的 A B C D 单字母选项标号、A.A 序号。
+    思路:把图周围的文字噪声抹掉,再交给 autocrop 贴紧真正的图形墨迹。"""
+    out = []
+    try:
+        d = page.get_text("dict")
+    except Exception:
+        return out
+    cy0, cy1 = clip.y0, clip.y1
+    for b in d.get("blocks", []):
+        for ln in b.get("lines", []):
+            y0, y1 = ln["bbox"][1], ln["bbox"][3]
+            if y1 <= cy0 or y0 >= cy1:          # 与 clip 纵向无交叠 → 跳过
+                continue
+            txt = "".join(s["text"] for s in ln.get("spans", [])).strip()
+            if not txt:
+                continue
+            body = txt.replace(" ", "")
+            tail = txt.lstrip()[2:]             # 选项字母+分隔符之后的内容
+            mask = False
+            if _STEM_RE.match(txt) or _MATLBL_RE.match(txt):          # 题干 / 独占行材料组标号
+                mask = True
+            elif _OPT_RE.match(txt) and (_CJK_RE.search(tail) or any(c.isdigit() for c in tail)):
+                mask = True                                           # 文字型选项 A.含汉字/数字
+            elif ("。" in txt) or ("？" in txt) or ("：" in txt and len(body) >= 8):
+                mask = True                                           # 成句/材料散文
+            elif "，" in txt and len(body) >= 12:
+                mask = True                                           # 长的逗号句(散文)
+            if mask:
+                out.append(fitz.Rect(ln["bbox"]))
+    return out
+
+
 def save_crop(page, clip, fn, zoom=ZOOM, mask_rects=None):
     """渲染并保存裁剪图:抹除页码/水印文字 + 漂白底纹 + 自动裁到内容包围盒 + 空白检测。
     - mask_rects: 页眉/页脚噪声文字行(PDF点坐标),命中后整行涂白(黑字页码也能去)
@@ -238,6 +307,9 @@ def extract(pdf_path, out_dir="graphic_crops", zoom=ZOOM):
             y0 = max(0, y - 4)
             y1 = qs[i + 1][1] - 4 if i + 1 < len(qs) else pr.height - 16
             y1 = min(y1, pr.height * FOOTER_CLIP_RATIO)   # 不把页脚页码切进图
+            cut = _section_cut_y(page, y0, y1)            # 遇资料分析/材料分界 → 截断
+            if cut and cut - y0 >= MIN_BAND_H:
+                y1 = cut
             if y1 - y0 < MIN_BAND_H:
                 continue
             has_visual, area, union = _visual_objects_in(page, y0, y1)
@@ -259,6 +331,8 @@ def extract(pdf_path, out_dir="graphic_crops", zoom=ZOOM):
                 # 图形顶部以上一律涂白:挡掉残留的题干文字行(autocrop 才不会把它带回来)
                 if union is not None and union.y0 > clip.y0:
                     mask.append(fitz.Rect(clip.x0, clip.y0, clip.x1, union.y0))
+                # 题干/文字型选项/散文一律涂白,只留图形墨迹
+                mask += _text_mask_rects(page, clip)
                 fn = os.path.join(out_dir, f"{base}_p{pno+1}_q{num}.png")
                 if not save_crop(page, clip, fn, zoom, mask_rects=mask):
                     continue   # 区域里只有水印/底纹,不是真图形题

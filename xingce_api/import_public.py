@@ -23,9 +23,11 @@ def main():
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
-    if len(sys.argv) < 2:
-        raise SystemExit("用法: python import_public.py 解压目录(含 public_seed.db 与 images/)")
-    seed_dir = sys.argv[1]
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    replace = "--replace" in sys.argv      # 先清空本机全部公共题再导入(整库替换)
+    if not args:
+        raise SystemExit("用法: python import_public.py 解压目录 [--replace]")
+    seed_dir = args[0]
     seed_db = os.path.join(seed_dir, "public_seed.db")
     seed_img = os.path.join(seed_dir, "images")
     if not os.path.exists(seed_db):
@@ -35,11 +37,23 @@ def main():
     dst_path = config.DB_URL[len("sqlite:///"):]
     db = sqlite3.connect(dst_path)
     db.execute("PRAGMA foreign_keys=OFF")
-    db.execute("ATTACH ? AS seed", (seed_db,))
     cur = db.cursor()
 
     def cols(table):  # 该表除主键 id 外的列名(按本机表结构)
         return [r[1] for r in cur.execute(f'PRAGMA table_info("{table}")') if r[1] != "id"]
+
+    if replace:   # 整库替换:删掉本机所有 public 题/卷/材料/图(不动用户私有题)
+        pqids = [r[0] for r in cur.execute("SELECT id FROM question WHERE scope='public'")]
+        if pqids:
+            qi = ",".join(map(str, pqids))
+            cur.execute(f"DELETE FROM question_image WHERE question_id IN ({qi})")
+        cur.execute("DELETE FROM question WHERE scope='public'")
+        cur.execute("DELETE FROM paper WHERE scope='public'")
+        cur.execute("DELETE FROM material_group WHERE scope='public'")
+        db.commit()
+        print(f"[--replace] 已清空本机原有公共题 {len(pqids)} 道,准备重新导入")
+
+    db.execute("ATTACH ? AS seed", (seed_db,))
 
     # 已有公共指纹 → 去重
     existing_fp = {r[0] for r in cur.execute(

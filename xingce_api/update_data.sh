@@ -36,8 +36,8 @@ echo ">> 激活环境(若有 venv)"
 PY=$(command -v python || command -v python3)
 echo ">> 使用 Python: $PY"
 
-echo ">> 导入公共题(自动去重,可重复跑)"
-"$PY" import_public.py seed
+echo ">> 导入公共题(整库替换:清空旧公共题后导入新种子;用户私有题不动)"
+"$PY" import_public.py seed --replace
 
 echo ">> 用本机 embedding 重建全部向量"
 "$PY" reembed.py

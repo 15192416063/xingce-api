@@ -43,6 +43,29 @@ def _find_section(doc):
     return cand
 
 
+_MATGRP_RE = re.compile(r'^\s*[（(][一二三四五六七八九十]+[)）]')   # 材料组标号 (一)(二)…
+
+
+def _boundary_between(page, y_top, y_bot):
+    """两个图形之间是否横亘着"题/材料边界行"(题号、选项、材料组标号)。
+    有的话两个图分属不同题/材料,绝不能并进一张图(否则串题)。"""
+    if y_bot - y_top < 6:
+        return False
+    try:
+        d = page.get_text("dict")
+    except Exception:
+        return False
+    for b in d.get("blocks", []):
+        for ln in b.get("lines", []):
+            cy = (ln["bbox"][1] + ln["bbox"][3]) / 2
+            if not (y_top < cy < y_bot):
+                continue
+            txt = "".join(s["text"] for s in ln.get("spans", [])).strip()
+            if eg._STEM_RE.match(txt) or eg._OPT_RE.match(txt) or _MATGRP_RE.match(txt):
+                return True
+    return False
+
+
 def _chart_clusters(page, y_from, y_to):
     """页内 [y_from,y_to] 的真图形,按竖向聚簇,返回 [(y_top, rect_union), ...]
     页眉/页脚区域的对象(页码、水印、装饰)一律排除,否则会截出空白"图表"。"""
@@ -71,7 +94,8 @@ def _chart_clusters(page, y_from, y_to):
     rects.sort(key=lambda r: r.y0)
     clusters, cur = [], [rects[0]]
     for r in rects[1:]:
-        if r.y0 - cur[-1].y1 > CHART_GAP:
+        # 间距过大,或两图之间横着题/材料边界行 → 分属不同题,另起一簇
+        if r.y0 - cur[-1].y1 > CHART_GAP or _boundary_between(page, cur[-1].y1, r.y0):
             clusters.append(cur)
             cur = [r]
         else:
@@ -177,7 +201,8 @@ def parse(pdf_path, out_dir, zoom=3):
                              min(pr.width, rect.x1 + CHART_PAD_X),
                              min(pr.height * eg.FOOTER_CLIP_RATIO, rect.y1 + CHART_PAD_Y))
             try:
-                mask = [r for r in _page_noise(page) if r.intersects(clip)]
+                mask = [r for r in _page_noise(page) if r.intersects(clip)] \
+                    + eg._text_mask_rects(page, clip)
                 fn = os.path.join(out_dir, f"{base}_mat{gi+1}_p{pno+1}_{int(rect.y0)}.png")
                 if eg.save_crop(page, clip, fn, zoom, mask_rects=mask):
                     g["images"].append(fn)
@@ -211,7 +236,8 @@ def parse(pdf_path, out_dir, zoom=3):
                                      min(pr.width, rect.x1 + PAD),
                                      min(pr.height * eg.FOOTER_CLIP_RATIO, rect.y1 + PAD))
                     try:
-                        mask = [r for r in _page_noise(page) if r.intersects(clip)]
+                        mask = [r for r in _page_noise(page) if r.intersects(clip)] \
+                            + eg._text_mask_rects(page, clip)
                         fn = os.path.join(
                             out_dir, f"{base}_opt_q{s['qnum']}_p{pno+1}_{int(rect.y0)}.png")
                         if eg.save_crop(page, clip, fn, zoom, mask_rects=mask):
