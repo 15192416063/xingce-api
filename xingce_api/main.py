@@ -28,7 +28,7 @@ import security
 from db import (init_db, SessionLocal, IngestionJob, Question, QuestionImage,
                 PracticeRecord, WrongBook, MaterialGroup, Favorite, User, News,
                 AiUsage, StatDaily, VisitDay, LoginLog, Setting, AuditLog, AiChannel,
-                Paper, InviteCode, ExamInfo, MockExam, TokenStat, ChatLog)
+                Paper, InviteCode, ExamInfo, MockExam, TokenStat, ChatLog, Feedback)
 import exams
 
 # ---- 错误日志:轮转文件,排障不靠猜(稳定性) ----
@@ -1366,6 +1366,29 @@ def fav_list(u: User = Depends(auth.current_user)):
     return {"count": len(out), "items": out}
 
 
+# ============ 学习成就卡(分享用) ============
+@app.get("/api/share/card")
+def share_card(u: User = Depends(auth.current_user)):
+    """生成"学习成就卡"所需数据:刷题数/正确率/连续打卡/学习天数/距考试倒计时。"""
+    db = SessionLocal()
+    recs = db.query(PracticeRecord).filter(PracticeRecord.user_id == u.id).all()
+    db.close()
+    judged = [r for r in recs if r.is_correct in (0, 1)]
+    correct = sum(1 for r in judged if r.is_correct == 1)
+    rate = round(correct * 100 / len(judged)) if judged else 0
+    day_set = {r.created_at.date() for r in recs if r.created_at}
+    days_to = None
+    try:
+        ed = datetime.strptime(config.EXAM_DATE, "%Y-%m-%d").date()
+        days_to = (ed - date.today()).days
+    except Exception:
+        pass
+    return {"nickname": u.nickname or u.username, "done": len(judged),
+            "correct_rate": rate, "streak": _streak(day_set),
+            "study_days": len(day_set), "exam_name": config.EXAM_NAME,
+            "days_to_exam": days_to}
+
+
 # ============ 仪表盘 ============
 def _streak(dates_set):
     s, d = 0, date.today()
@@ -1748,6 +1771,136 @@ def admin_user_detail(uid: int, admin: User = Depends(auth.require_admin)):
     db.close()
     return {"user": info, "chats": chats, "questions": mineq,
             "logins": logins, "daily": daily}
+
+
+# ============ 站点配置:反馈邮箱 + 社媒链接/二维码(管理员可随时改) ============
+SITE_FIELDS = ["feedback_email", "wechat", "xiaohongshu", "douyin",
+               "bilibili", "zhihu", "qr_image", "contact_note"]
+
+
+def _site_get() -> dict:
+    db = SessionLocal()
+    row = db.query(Setting).filter(Setting.skey == "site_contact").first()
+    db.close()
+    try:
+        return json.loads(row.sval) if row and row.sval else {}
+    except Exception:
+        return {}
+
+
+def _site_set(data: dict):
+    db = SessionLocal()
+    row = db.query(Setting).filter(Setting.skey == "site_contact").first()
+    if not row:
+        row = Setting(skey="site_contact")
+        db.add(row)
+    row.sval = json.dumps(data, ensure_ascii=False)
+    db.commit()
+    db.close()
+
+
+async def _save_image(file: UploadFile, prefix: str, max_px: int = 1280,
+                      fmt: str = "JPEG", quality: int = 82) -> str:
+    """保存上传图片:校验是图片(拒视频)+ 等比缩放 + 压缩 + 去元数据(省内存/磁盘)。
+    返回相对 IMAGE_DIR 的 key。供二维码、论坛配图等复用。"""
+    data = await file.read(8 * 1024 * 1024 + 1)
+    if len(data) > 8 * 1024 * 1024:
+        raise HTTPException(413, "图片不能超过 8MB")
+    from PIL import Image
+    import io as _io
+    try:
+        im = Image.open(_io.BytesIO(data))
+        im.load()
+    except Exception:
+        raise HTTPException(400, "不是有效的图片文件(仅支持图片,不支持视频)")
+    if im.mode in ("RGBA", "P", "LA") and fmt == "JPEG":
+        im = im.convert("RGB")
+    w, h = im.size
+    if max(w, h) > max_px:
+        s = max_px / max(w, h)
+        im = im.resize((max(1, int(w * s)), max(1, int(h * s))))
+    ext = "png" if fmt == "PNG" else "jpg"
+    key = f"{prefix}/{uuid.uuid4().hex}.{ext}"
+    path = os.path.join(config.IMAGE_DIR, key)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if fmt == "PNG":
+        im.save(path, "PNG", optimize=True)
+    else:
+        im.save(path, "JPEG", quality=quality, optimize=True)
+    return key
+
+
+@app.get("/api/admin/site")
+def admin_site_get(admin: User = Depends(auth.require_admin)):
+    return _site_get()
+
+
+@app.post("/api/admin/site")
+def admin_site_set(payload: dict = Body(...), admin: User = Depends(auth.require_admin)):
+    cur = _site_get()
+    for k in SITE_FIELDS:
+        if k in payload:
+            cur[k] = str(payload[k] or "")[:500]
+    _site_set(cur)
+    _audit(admin.id, "更新站点联系方式/社媒")
+    return {"ok": True}
+
+
+@app.post("/api/admin/site/qr")
+async def admin_site_qr(file: UploadFile = File(...),
+                        admin: User = Depends(auth.require_admin)):
+    key = await _save_image(file, "site", max_px=600, fmt="PNG")  # 二维码要清晰,用 PNG
+    cur = _site_get()
+    cur["qr_image"] = key
+    _site_set(cur)
+    return {"ok": True, "qr_image": key}
+
+
+@app.get("/api/site/contact")
+def site_contact(u: User = Depends(auth.optional_user)):
+    """公开:社媒链接 + 二维码(供前端"关于/联系"区展示);反馈邮箱不外露。"""
+    d = _site_get()
+    return {k: d.get(k, "") for k in ["wechat", "xiaohongshu", "douyin",
+                                      "bilibili", "zhihu", "qr_image", "contact_note"]}
+
+
+# ============ 用户反馈 ============
+@app.post("/api/feedback")
+def submit_feedback(payload: dict = Body(...), u: User = Depends(auth.current_user)):
+    """用户提交使用反馈 → 存库(管理员后台可见)。"""
+    content = (payload.get("content") or "").strip()[:2000]
+    if len(content) < 4:
+        raise HTTPException(400, "请描述一下你遇到的问题或建议")
+    db = SessionLocal()
+    db.add(Feedback(user_id=u.id, username=u.username, content=content,
+                    contact=(payload.get("contact") or "").strip()[:128]))
+    db.commit()
+    db.close()
+    return {"ok": True}
+
+
+@app.get("/api/admin/feedback")
+def admin_feedback(limit: int = 200, admin: User = Depends(auth.require_admin)):
+    db = SessionLocal()
+    rows = db.query(Feedback).order_by(Feedback.id.desc()).limit(limit).all()
+    out = [{"id": f.id, "username": f.username, "content": f.content,
+            "contact": f.contact, "status": f.status,
+            "time": f.created_at.strftime("%m-%d %H:%M") if f.created_at else ""}
+           for f in rows]
+    unread = db.query(Feedback).filter(Feedback.status == 0).count()
+    db.close()
+    return {"count": len(out), "unread": unread, "items": out}
+
+
+@app.post("/api/admin/feedback/{fid}/read")
+def admin_feedback_read(fid: int, admin: User = Depends(auth.require_admin)):
+    db = SessionLocal()
+    f = db.get(Feedback, fid)
+    if f:
+        f.status = 1
+        db.commit()
+    db.close()
+    return {"ok": True}
 
 
 # ============ 资讯/公告 ============

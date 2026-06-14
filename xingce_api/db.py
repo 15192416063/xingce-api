@@ -277,6 +277,18 @@ class VisitDay(Base):
     dwell_sec: Mapped[int] = mapped_column(Integer, default=0)   # 当日累计停留秒数
 
 
+class Feedback(Base):
+    """用户反馈:使用中遇到的问题/建议。后台可见,可选发邮件给管理员。"""
+    __tablename__ = "feedback"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    username: Mapped[str] = mapped_column(String(64), default="")
+    content: Mapped[str] = mapped_column(Text, default="")
+    contact: Mapped[str] = mapped_column(String(128), default="")  # 用户留的联系方式(选填)
+    status: Mapped[int] = mapped_column(Integer, default=0)        # 0未读 1已读
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class ChatLog(Base):
     """AI 对话流水:每次对话存一条。供后台审计「聊了什么/粘了什么题」+ 点赞点踩。"""
     __tablename__ = "chat_log"

@@ -261,6 +261,9 @@ input:focus,select:focus{border-color:var(--green)}
 .umask{position:fixed;inset:0;background:rgba(20,24,20,.45);z-index:2000;display:flex;align-items:center;justify-content:center;padding:20px}
 .ubox{background:#fff;border-radius:14px;max-width:680px;width:100%;max-height:86vh;overflow:auto;padding:18px 20px}
 .ulog{border-bottom:1px solid #f0efe6;padding:6px 0;font-size:13px;line-height:1.6}
+.srow{display:flex;align-items:center;gap:10px;margin:7px 0;flex-wrap:wrap}
+.srow>span:first-child{width:120px;font-size:13px;color:var(--ink)}
+.srow input{flex:1;min-width:180px;font-size:13px;padding:6px 9px;border:1.5px solid var(--line);border-radius:8px;font-family:inherit}
 .chatbox{display:flex;gap:8px;align-items:flex-end}
 .chatbox textarea{flex:1;height:54px;resize:vertical;padding:9px;border:1.5px solid var(--line);border-radius:10px;font-family:inherit;font-size:14px;background:#fff}
 .chatbox textarea:focus{outline:none;border-color:var(--green)}
@@ -456,7 +459,7 @@ input:focus,select:focus{border-color:var(--green)}
    <div class="side-foot">
      <div class="u" id="me-name"></div>
      <div id="online-side" style="margin-bottom:6px"></div>
-     <a onclick="changePwd()">改密码</a> · <a onclick="logout()">退出</a>
+     <a onclick="openFeedback()">意见反馈</a> · <a onclick="changePwd()">改密码</a> · <a onclick="logout()">退出</a>
    </div>
  </aside>
  <main class="main" id="main"></main>
@@ -593,7 +596,7 @@ async function boot(){
  if(USER.role===1)more.push(['admin','gear','运营管理']);
  $('#msheet').innerHTML=`<div style="text-align:center;color:var(--muted);font-size:12px;padding-bottom:6px">${esc(USER.nickname)}${USER.role===1?' · 管理员':''}</div>`
   +more.map(n=>`<a data-v="${n[0]}">${ic(n[1])}${n[2]}</a>`).join('')
-  +`<a onclick="hideSheet();changePwd()">${ic('lock')}改密码</a><a onclick="hideSheet();logout()">${ic('out')}退出登录</a>`;
+  +`<a onclick="hideSheet();openFeedback()">${ic('news')}意见反馈</a><a onclick="hideSheet();changePwd()">${ic('lock')}改密码</a><a onclick="hideSheet();logout()">${ic('out')}退出登录</a>`;
  $('#msheet').onclick=e=>{const a=e.target.closest('a');if(!a||!a.dataset.v)return;hideSheet();go(a.dataset.v);};
  $('#me-name').innerHTML=`${esc(USER.nickname)}${USER.role===1?' · 管理员':''}`;
  trackVisit();startHeartbeat();
@@ -756,6 +759,50 @@ function chatClear(){if(AI_BUSY){toast('正在生成,请稍候');return;}
 function chatFb(cid,val,el){const bar=el.parentNode;const send=el.classList.contains('on')?0:val;
  fetch('/api/ai/feedback',{method:'POST',headers:{'content-type':'application/json','Authorization':'Bearer '+TOKEN},body:JSON.stringify({chat_id:cid,value:send})}).catch(()=>{});
  bar.querySelectorAll('.fbb').forEach(b=>b.classList.remove('on'));if(send)el.classList.add('on');}
+/* ---------- 学习成就卡(分享) ---------- */
+const CARD_CAPTION='我在「行测智能题库」坚持刷题打卡,一起上岸!';
+function buildCardSVG(d){const dte=d.days_to_exam==null?'—':d.days_to_exam;
+ const cell=(x,y,n,l,col)=>`<text x="${x}" y="${y}" text-anchor="middle" font-size="66" fill="${col}" font-weight="bold" font-family="sans-serif">${n}</text>
+  <text x="${x}" y="${y+38}" text-anchor="middle" font-size="20" fill="#cfe0d2" font-family="sans-serif">${l}</text>`;
+ return `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="860" viewBox="0 0 640 860">
+  <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1f3d2b"/><stop offset="1" stop-color="#2f5a40"/></linearGradient></defs>
+  <rect width="640" height="860" fill="url(#g)"/>
+  <text x="320" y="108" text-anchor="middle" font-size="42" fill="#f4efe0" font-weight="bold" font-family="serif">我的行测打卡</text>
+  <text x="320" y="156" text-anchor="middle" font-size="22" fill="#cfe0d2" font-family="sans-serif">${esc(d.nickname||'')}</text>
+  ${cell(170,330,d.done,'累计刷题(道)','#ffd479')}
+  ${cell(470,330,d.correct_rate+'%','总正确率','#ffd479')}
+  ${cell(170,560,d.streak,'连续打卡(天)','#9fe0b0')}
+  ${cell(470,560,d.study_days,'学习天数','#9fe0b0')}
+  <rect x="70" y="636" width="500" height="104" rx="18" fill="#ffffff18"/>
+  <text x="320" y="682" text-anchor="middle" font-size="22" fill="#cfe0d2" font-family="sans-serif">距 ${esc(d.exam_name||'目标考试')} 还有</text>
+  <text x="320" y="722" text-anchor="middle" font-size="34" fill="#ffd479" font-weight="bold" font-family="sans-serif">${dte} 天</text>
+  <text x="320" y="812" text-anchor="middle" font-size="20" fill="#9fb6a4" font-family="sans-serif">行测智能题库 · 一起上岸</text></svg>`;}
+function cardToBlob(svg,cb){const img=new Image();
+ const url=URL.createObjectURL(new Blob([svg],{type:'image/svg+xml;charset=utf-8'}));
+ img.onload=()=>{const c=document.createElement('canvas');c.width=640;c.height=860;
+   const ctx=c.getContext('2d');ctx.fillStyle='#1f3d2b';ctx.fillRect(0,0,640,860);ctx.drawImage(img,0,0);
+   URL.revokeObjectURL(url);c.toBlob(cb,'image/png');};
+ img.onerror=()=>{URL.revokeObjectURL(url);toast('生成图片失败');};img.src=url;}
+async function shareCard(){let d;try{d=await j('/api/share/card');}catch(e){toast('加载失败');return;}
+ window._cardSVG=buildCardSVG(d);
+ const prev='data:image/svg+xml;utf8,'+encodeURIComponent(window._cardSVG);
+ document.body.insertAdjacentHTML('beforeend',`<div class="umask" onclick="if(event.target===this)this.remove()">
+   <div class="ubox" style="max-width:380px;text-align:center">
+   <img src="${prev}" style="width:100%;border-radius:12px" alt="成就卡"/>
+   <div style="display:flex;gap:8px;margin-top:12px;justify-content:center;flex-wrap:wrap">
+    <button class="btn sm" onclick="saveCardImg()">保存图片</button>
+    <button class="btn sm ghost" onclick="shareCardImg()">分享</button>
+    <button class="btn sm ghost" onclick="copyCardCap()">复制文案</button>
+    <span class="chatact" onclick="this.closest('.umask').remove()">关闭</span></div>
+   <div class="muted" style="font-size:12px;margin-top:8px">保存图片后,可发到 小红书/抖音/B站/朋友圈/知乎</div></div></div>`);}
+function saveCardImg(){cardToBlob(window._cardSVG,b=>{if(!b)return;const a=document.createElement('a');
+ a.href=URL.createObjectURL(b);a.download='我的行测成就.png';a.click();toast('已保存');});}
+function shareCardImg(){cardToBlob(window._cardSVG,async b=>{if(!b)return;const f=new File([b],'行测成就.png',{type:'image/png'});
+ try{if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f],text:CARD_CAPTION});return;}}catch(e){}
+ saveCardImg();toast('已保存图片,去各平台发布吧');});}
+function copyCardCap(){const t=CARD_CAPTION+' '+location.origin;
+ if(navigator.clipboard)navigator.clipboard.writeText(t).then(()=>toast('文案已复制')).catch(()=>toast('复制失败'));
+ else toast('请手动复制:'+t);}
 /* 历史会话:新建 / 切换 / 删除 / 列表 */
 function newConvo(){if(AI_BUSY){toast('正在生成,请稍候');return;}
  CHAT=[];AI_HIST=[];LAST_ITEMS=[];CUR=Date.now();
@@ -1172,7 +1219,7 @@ V.stats=async()=>{const s=await j('/api/stats');const acc=s.accuracy==null?'—'
    <div class="serif" style="font-size:22px;font-weight:700;margin:4px 0">${rk.name||'萌新上路'}</div>
    ${rk.next?`<div class="muted" style="font-size:12px">再做 <b style="color:var(--orange)">${rk.need}</b> 题升「${rk.next}」</div>
    <div class="cap" style="max-width:220px;margin:8px auto 0"><i style="width:${rk.pct}%"></i></div>`:'<div class="muted" style="font-size:12px">已是最高段位</div>'}</div>`;
- return `<h2 class="page">学习数据</h2>
+ return `<h2 class="page">学习数据 <button class="btn sm ghost" style="float:right;font-weight:400" onclick="shareCard()">分享成就卡</button></h2>
  <div class="grid g3">
    <div class="card hero" style="margin:0"><div class="sub">距 ${s.exam_name||'目标考试'} 还有</div><div class="days">${s.exam_days_left!=null?s.exam_days_left:'—'} <span style="font-size:18px">天</span></div><div class="sub">坚持每天练,稳步上岸</div></div>
    ${rankcard}
@@ -1196,12 +1243,24 @@ V.stats=async()=>{const s=await j('/api/stats');const acc=s.accuracy==null?'—'
    <div class="stat"><div class="n" data-cu="${s.active_days}">0</div><div class="l">学习天数</div></div></div>`;};
 
 /* ---------- 运营管理(管理员) ---------- */
-V.admin=async()=>{setTimeout(()=>{loadPending();loadMetrics();loadSettings();loadChannels();loadInvites();loadUsers();},0);
+V.admin=async()=>{setTimeout(()=>{loadPending();loadMetrics();loadSettings();loadChannels();loadInvites();loadUsers();loadSite();loadFeedback();},0);
  return `<h2 class="page">运营管理 <span class="muted" style="font-size:13px;font-family:system-ui;font-weight:400">(管理员)</span></h2>
  <div id="metrics"><div class="card muted center">统计加载中…</div></div>
  <div class="card"><b>账号管理</b> <span class="muted" style="font-size:12px">每个账号的行为画像:登录/活跃天/停留/对话/粘贴题</span>
   <div style="margin-top:8px"><input id="usearch" placeholder="搜索用户名" style="font-size:13px;width:170px" onkeydown="if(event.key==='Enter')loadUsers()"> <button class="btn sm" onclick="loadUsers()">搜索</button></div>
   <div id="users" style="margin-top:10px" class="muted">加载中…</div></div>
+ <div class="card"><b>联系方式 / 社媒 / 反馈邮箱</b> <span class="muted" style="font-size:12px">随时编辑;社媒链接与二维码会展示给用户,反馈邮箱仅用于接收用户反馈(不外露)</span>
+  <div id="site" style="margin-top:10px">
+   <div class="srow"><span>接收反馈邮箱</span><input id="st-feedback_email" placeholder="you@example.com"></div>
+   <div class="srow"><span>微信(号/链接)</span><input id="st-wechat" placeholder="微信号 或 公众号链接"></div>
+   <div class="srow"><span>小红书</span><input id="st-xiaohongshu" placeholder="主页链接"></div>
+   <div class="srow"><span>抖音</span><input id="st-douyin" placeholder="主页链接"></div>
+   <div class="srow"><span>B站</span><input id="st-bilibili" placeholder="主页链接"></div>
+   <div class="srow"><span>知乎</span><input id="st-zhihu" placeholder="主页链接"></div>
+   <div class="srow"><span>联系说明</span><input id="st-contact_note" placeholder="如:有问题加微信/邮件,看到会回"></div>
+   <div class="srow"><span>二维码图</span><span><img id="st-qr" style="height:64px;border-radius:6px;display:none;vertical-align:middle;margin-right:8px"><label class="btn sm ghost" style="cursor:pointer">上传二维码<input type="file" accept="image/*" style="display:none" onchange="uploadQR(this)"></label></span></div>
+   <button class="btn sm" style="margin-top:8px" onclick="saveSite()">保存</button></div></div>
+ <div class="card"><b>用户反馈</b> <span id="fb-unread" class="muted" style="font-size:12px"></span> <button class="btn sm ghost" onclick="loadFeedback()">刷新</button><div id="fblist" style="margin-top:10px" class="muted">加载中…</div></div>
  <div class="card"><b>AI 模型渠道</b> <span class="muted" style="font-size:12px">按优先级使用(小的先用),失败自动切换下一个;不配则用 .env 的 DeepSeek Key</span>
   <div id="channels" style="margin-top:10px" class="muted">加载中…</div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center;border-top:1px dashed var(--line);padding-top:12px">
@@ -1272,6 +1331,42 @@ async function showUser(id){let r;try{r=await j('/api/admin/users/'+id);}catch(e
    <b>粘贴/上传的题</b><div style="max-height:160px;overflow:auto;margin:4px 0">${qs}</div>
  </div></div>`;
  document.body.insertAdjacentHTML('beforeend',html);}
+/* ---- 站点配置:反馈邮箱 / 社媒 / 二维码 ---- */
+const SITE_KEYS=['feedback_email','wechat','xiaohongshu','douyin','bilibili','zhihu','contact_note'];
+async function loadSite(){let d;try{d=await j('/api/admin/site');}catch(e){return;}
+ SITE_KEYS.forEach(k=>{const el=$('#st-'+k);if(el)el.value=d[k]||'';});
+ const qr=$('#st-qr');if(qr&&d.qr_image){qr.src='/img/'+d.qr_image;qr.style.display='inline-block';}}
+async function saveSite(){const body={};SITE_KEYS.forEach(k=>body[k]=($('#st-'+k)||{}).value||'');
+ const r=await j('/api/admin/site',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+ if(r.ok)toast('已保存');else toast(r.detail||'失败');}
+async function uploadQR(inp){if(!inp.files[0])return;const fd=new FormData();fd.append('file',inp.files[0]);
+ let r;try{r=await j('/api/admin/site/qr',{method:'POST',body:fd});}catch(e){toast('上传失败:'+e);return;}
+ if(r.qr_image){const qr=$('#st-qr');qr.src='/img/'+r.qr_image+'?t='+Date.now();qr.style.display='inline-block';toast('二维码已上传(已自动压缩)');}}
+/* ---- 用户反馈(提交 + 展示社媒/二维码) ---- */
+async function openFeedback(){let c={};try{c=await j('/api/site/contact');}catch(e){}
+ const links=[['微信',c.wechat],['小红书',c.xiaohongshu],['抖音',c.douyin],['B站',c.bilibili],['知乎',c.zhihu]].filter(x=>x[1]);
+ const linkHTML=links.map(([n,u])=>/^https?:/.test(u)?`<a href="${esc(u)}" target="_blank" rel="noopener" class="tag" style="text-decoration:none">${n}</a>`:`<span class="tag">${n}:${esc(u)}</span>`).join(' ');
+ const qr=c.qr_image?`<div style="margin-top:8px"><img src="/img/${esc(c.qr_image)}" style="max-width:160px;border-radius:8px"></div>`:'';
+ const contactBlock=(linkHTML||qr||c.contact_note)?`<div style="margin-top:14px;border-top:1px dashed var(--line);padding-top:10px"><div class="muted" style="font-size:12px;margin-bottom:6px">也可以这样找到我们:</div>${c.contact_note?'<div style="font-size:13px;margin-bottom:6px">'+esc(c.contact_note)+'</div>':''}${linkHTML}${qr}</div>`:'';
+ document.body.insertAdjacentHTML('beforeend',`<div class="umask" onclick="if(event.target===this)this.remove()"><div class="ubox" style="max-width:440px">
+   <div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:0;font-size:16px">意见反馈</h3><span class="chatact" onclick="this.closest('.umask').remove()">关闭 ✕</span></div>
+   <div class="muted" style="font-size:12px;margin:6px 0">用着遇到问题、或想要某个功能,都可以告诉我们~</div>
+   <textarea id="fb-content" style="width:100%;height:100px;padding:9px;border:1.5px solid var(--line);border-radius:9px;font-family:inherit;font-size:13px" placeholder="描述你遇到的问题或建议…"></textarea>
+   <input id="fb-contact" placeholder="留个联系方式方便回复(选填)" style="width:100%;margin-top:8px;padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;font-family:inherit">
+   <button class="btn sm" style="margin-top:10px" onclick="sendFeedback(this)">提交反馈</button>${contactBlock}</div></div>`);}
+async function sendFeedback(btn){const content=(($('#fb-content')||{}).value||'').trim();if(content.length<4){toast('请描述一下问题或建议');return;}
+ btn.disabled=true;
+ try{const r=await j('/api/feedback',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({content,contact:($('#fb-contact')||{}).value||''})});
+   if(r.ok){toast('反馈已提交,谢谢!');const m=document.querySelector('.umask');if(m)m.remove();}else{toast(r.detail||'提交失败');btn.disabled=false;}}
+ catch(e){toast('提交失败:'+e);btn.disabled=false;}}
+async function loadFeedback(){let r;try{r=await j('/api/admin/feedback');}catch(e){return;}
+ const u=$('#fb-unread');if(u)u.textContent=r.unread?('未读 '+r.unread):'';
+ const el=$('#fblist');if(!el)return;
+ if(!r.items||!r.items.length){el.innerHTML='<span class="muted">暂无反馈</span>';return;}
+ el.innerHTML=r.items.map(f=>`<div class="ulog" style="${f.status?'':'background:#fff7e6;border-radius:6px;padding:6px 8px'}">
+   <div><b>${esc(f.username)}</b> <span class="muted" style="font-size:11px">${f.time}</span>${f.contact?' · 联系:'+esc(f.contact):''} ${f.status?'':'<span class="tag">未读</span>'}</div>
+   <div>${esc(f.content)}</div>${f.status?'':`<span class="chatact" onclick="fbRead(${f.id})">标已读</span>`}</div>`).join('');}
+async function fbRead(id){await j('/api/admin/feedback/'+id+'/read',{method:'POST'}).catch(()=>{});loadFeedback();}
 /* ---- 邀请码管理 ---- */
 async function loadInvites(){let r;try{r=await j('/api/admin/invites');}catch(e){return;}
  const box=$('#invites');if(!box)return;
