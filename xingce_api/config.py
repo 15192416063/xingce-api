@@ -89,6 +89,8 @@ MINE_CAP = int(os.getenv("XC_MINE_CAP", "5000"))
 # 用户上传 PDF 大小上限(MB)与每日上传份数上限
 MINE_PDF_MAX_MB = int(os.getenv("XC_MINE_PDF_MAX_MB", "30"))
 MINE_PDF_DAILY = int(os.getenv("XC_MINE_PDF_DAILY", "3"))
+# 上传 PDF 页数上限(防超大/扫描整本书挤内存、烧 token);切题前本地预校验用
+UPLOAD_MAX_PAGES = int(os.getenv("XC_UPLOAD_MAX_PAGES", "60"))
 # 每日刷题目标(留存:首页进度条)
 DAILY_GOAL = int(os.getenv("XC_DAILY_GOAL", "20"))
 # DeepSeek 价格(¥/百万token),管理员成本面板估算用,价格变了改这里

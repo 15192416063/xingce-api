@@ -28,7 +28,7 @@ import security
 from db import (init_db, SessionLocal, IngestionJob, Question, QuestionImage,
                 PracticeRecord, WrongBook, MaterialGroup, Favorite, User, News,
                 AiUsage, StatDaily, VisitDay, LoginLog, Setting, AuditLog, AiChannel,
-                Paper, InviteCode, ExamInfo, MockExam, TokenStat)
+                Paper, InviteCode, ExamInfo, MockExam, TokenStat, ChatLog)
 import exams
 
 # ---- 错误日志:轮转文件,排障不靠猜(稳定性) ----
@@ -404,6 +404,13 @@ async def upload(background: BackgroundTasks, file: UploadFile = File(...),
         raise HTTPException(400, "仅支持 PDF")
     save = os.path.join(config.PDF_DIR, f"{uuid.uuid4().hex}.pdf")
     await _save_pdf(file, save, config.ADMIN_PDF_MAX_MB)
+    ok, why = ingest.precheck_pdf(save, max_pages=config.UPLOAD_MAX_PAGES)
+    if not ok:
+        try:
+            os.remove(save)
+        except OSError:
+            pass
+        raise HTTPException(400, why)
     db = SessionLocal()
     job = IngestionJob(file_name=file.filename, file_path=save, scope="public", status=0)
     db.add(job)
@@ -750,14 +757,16 @@ def _cat_fill(db, scopes, c, uid, picked, seen, k, match):
     不依赖向量库——没配 embedding 也能调出带图的真题(对话调题的兜底主力)。"""
     if len(picked) >= k:
         return
-    qy = db.query(Question).filter(Question.status == 1, Question.scope.in_(scopes))
-    if c.get("l2"):
-        qy = qy.filter(Question.category_l2 == c["l2"])
-    elif c.get("l1"):
-        qy = qy.filter(Question.category_l1 == c["l1"])
-    else:
+    base = db.query(Question).filter(Question.status == 1, Question.scope.in_(scopes))
+    pool = []
+    if c.get("l2"):     # 先按二级题型精确取
+        pool = [q for q in base.filter(Question.category_l2 == c["l2"]).limit(200).all()
+                if q.id not in seen]
+    if not pool and c.get("l1"):   # l2 太细/不在库里(如"行程问题-相遇追及")→ 退回按一级题型
+        pool = [q for q in base.filter(Question.category_l1 == c["l1"]).limit(200).all()
+                if q.id not in seen]
+    if not pool:
         return
-    pool = [q for q in qy.limit(200).all() if q.id not in seen]
     random.shuffle(pool)
     for q in pool[: k - len(picked)]:
         vo = _q_to_vo(q, db, user_id=uid)
@@ -778,11 +787,14 @@ def _mine_first_recommend(db, c, msg, uid, k=6):
     try:
         hits = vectors.search(c.get("summary") or msg, ["public", mine_scope],
                               k=k + len(seen), l2=c.get("l2"))
+        if not hits and c.get("l2"):   # l2 太细没命中 → 去掉题型限制再搜(下面只收同一级题型)
+            hits = vectors.search(c.get("summary") or msg, ["public", mine_scope],
+                                  k=k + len(seen))
         for qid, dist in hits:
             if qid in seen or len(picked) >= k:
                 continue
             sq = db.get(Question, qid)
-            if sq and sq.status == 1:
+            if sq and sq.status == 1 and (not c.get("l1") or sq.category_l1 == c["l1"]):
                 vo = _q_to_vo(sq, db, user_id=uid)
                 vo["match"] = round(max(0.0, 1 - dist), 3)
                 picked.append(vo)
@@ -822,7 +834,29 @@ def ai_ask(payload: dict = Body(...), u: User = Depends(auth.current_user)):
         pass
     if not reply:                       # 兜底:结构化失败就退回纯对话
         reply = ai.chat(msg, history)
-    return {"reply": reply, "analysis": analysis, "items": items}
+    # 记录对话流水(粘贴的题:够长且含 ABCD 选项)。chat_id 供前端点赞/点踩。
+    is_paste = 1 if (len(msg) > 60 and len(re.findall(r'[ABCD][\.、．]', msg)) >= 3) else 0
+    chat_id = opstats.log_chat(u.id, msg, reply,
+                               category=(analysis.get("l2") or analysis.get("l1") or ""),
+                               is_paste=is_paste)
+    return {"reply": reply, "analysis": analysis, "items": items, "chat_id": chat_id}
+
+
+@app.post("/api/ai/feedback")
+def ai_feedback(payload: dict = Body(...), u: User = Depends(auth.current_user)):
+    """对某条 AI 回复点赞(1)/点踩(-1)/取消(0)。"""
+    cid = int(payload.get("chat_id") or 0)
+    val = int(payload.get("value") or 0)
+    if not cid or not opstats.set_feedback(u.id, cid, val):
+        raise HTTPException(404, "对话不存在")
+    return {"ok": True}
+
+
+@app.post("/api/track/heartbeat")
+def track_heartbeat(payload: dict = Body(...), u: User = Depends(auth.current_user)):
+    """前端在线心跳:累计停留时长(秒)。"""
+    opstats.add_dwell(u.id, int(payload.get("sec") or 0))
+    return {"ok": True}
 
 
 @app.post("/api/mine/add")
@@ -912,6 +946,13 @@ async def mine_upload_pdf(background: BackgroundTasks, file: UploadFile = File(.
         raise HTTPException(429, f"今天已传 {config.MINE_PDF_DAILY} 份,明天再来吧(解析很烧算力)")
     save = os.path.join(config.PDF_DIR, f"u{u.id}_{uuid.uuid4().hex}.pdf")
     await _save_pdf(file, save, config.MINE_PDF_MAX_MB)
+    ok, why = ingest.precheck_pdf(save, max_pages=config.UPLOAD_MAX_PAGES)
+    if not ok:
+        try:
+            os.remove(save)
+        except OSError:
+            pass
+        raise HTTPException(400, why)
     db = SessionLocal()
     job = IngestionJob(user_id=u.id, file_name=file.filename, file_path=save,
                        scope=f"user:{u.id}", status=0)
@@ -1626,6 +1667,87 @@ def admin_metrics(admin: User = Depends(auth.require_admin)):
         "ops": security.integrity_status(),
         "trend": trend,
     }
+
+
+# ============ 账号管理(仅管理员):每账号行为画像 ============
+@app.get("/api/admin/users")
+def admin_users(q: str = "", limit: int = 300, admin: User = Depends(auth.require_admin)):
+    """账号列表 + 行为聚合:登录次数、活跃天数、停留时长、对话次数、粘贴题数、私有题数。"""
+    db = SessionLocal()
+    uq = db.query(User)
+    if q:
+        uq = uq.filter(User.username.like(f"%{q}%"))
+    users = uq.order_by(User.id.desc()).limit(limit).all()
+    # 分组聚合,避免逐用户查询
+    visit = {uid: (days, int(dw or 0), last) for uid, days, dw, last in
+             db.query(VisitDay.user_id, func.count(VisitDay.id),
+                      func.sum(VisitDay.dwell_sec), func.max(VisitDay.day))
+             .group_by(VisitDay.user_id).all()}
+    chat = {uid: (cnt, int(paste or 0)) for uid, cnt, paste in
+            db.query(ChatLog.user_id, func.count(ChatLog.id), func.sum(ChatLog.is_paste))
+            .group_by(ChatLog.user_id).all()}
+    login = {name: cnt for name, cnt in
+             db.query(LoginLog.username, func.count(LoginLog.id))
+             .filter(LoginLog.ok == 1).group_by(LoginLog.username).all()}
+    mine = {}
+    for scope, cnt in db.query(Question.scope, func.count(Question.id)) \
+            .filter(Question.scope.like("user:%"), Question.status != 2) \
+            .group_by(Question.scope).all():
+        try:
+            mine[int(scope.split(":")[1])] = cnt
+        except (ValueError, IndexError):
+            pass
+    out = []
+    for u in users:
+        v = visit.get(u.id, (0, 0, ""))
+        ch = chat.get(u.id, (0, 0))
+        out.append({
+            "id": u.id, "username": u.username, "nickname": u.nickname or "",
+            "role": u.role, "status": u.status,
+            "created_at": u.created_at.strftime("%Y-%m-%d") if u.created_at else "",
+            "invite_code": u.invite_code or "",
+            "login_count": login.get(u.username, 0),
+            "active_days": v[0], "dwell_min": round(v[1] / 60), "last_active": v[2],
+            "chat_count": ch[0], "paste_count": ch[1],
+            "mine_questions": mine.get(u.id, 0),
+        })
+    db.close()
+    return {"count": len(out), "items": out}
+
+
+@app.get("/api/admin/users/{uid}")
+def admin_user_detail(uid: int, admin: User = Depends(auth.require_admin)):
+    """单账号详情:对话流水(正文)、粘贴/上传的题、登录记录、每日活跃。"""
+    db = SessionLocal()
+    u = db.get(User, uid)
+    if not u:
+        db.close()
+        raise HTTPException(404, "用户不存在")
+    chats = [{"id": c.id, "message": c.message, "reply": c.reply,
+              "category": c.category, "is_paste": c.is_paste, "feedback": c.feedback,
+              "time": c.created_at.strftime("%m-%d %H:%M") if c.created_at else ""}
+             for c in db.query(ChatLog).filter(ChatLog.user_id == uid)
+             .order_by(ChatLog.id.desc()).limit(100).all()]
+    mineq = [{"id": q.id, "category_l2": q.category_l2, "source": q.source,
+              "content": (q.content or "")[:200],
+              "time": q.created_at.strftime("%m-%d %H:%M") if q.created_at else ""}
+             for q in db.query(Question)
+             .filter(Question.scope == f"user:{uid}", Question.status != 2)
+             .order_by(Question.id.desc()).limit(100).all()]
+    logins = [{"ip": lg.ip, "ok": lg.ok,
+               "time": lg.created_at.strftime("%m-%d %H:%M") if lg.created_at else ""}
+              for lg in db.query(LoginLog).filter(LoginLog.username == u.username)
+              .order_by(LoginLog.id.desc()).limit(30).all()]
+    daily = [{"day": v.day, "dwell_min": round((v.dwell_sec or 0) / 60)}
+             for v in db.query(VisitDay).filter(VisitDay.user_id == uid)
+             .order_by(VisitDay.day.desc()).limit(30).all()]
+    info = {"id": u.id, "username": u.username, "nickname": u.nickname or "",
+            "role": u.role, "status": u.status,
+            "created_at": u.created_at.strftime("%Y-%m-%d") if u.created_at else "",
+            "chat_count": len(chats), "mine_count": len(mineq)}
+    db.close()
+    return {"user": info, "chats": chats, "questions": mineq,
+            "logins": logins, "daily": daily}
 
 
 # ============ 资讯/公告 ============

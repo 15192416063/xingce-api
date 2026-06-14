@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """入库编排:PDF → 文字题切题分类 + 图形题抠图 → 去重 → 落库 + 向量。
-图形题入库为 status=0 待确认(人工核对裁剪图后才进出题池)。"""
+入库即进出题池(status=1),公共/私有一致,不再卡人工审核。"""
 import os
 import re
 import sys
@@ -76,6 +76,35 @@ def _band_text(pdf_path, page_no, y0, y1) -> str:
         return ""
 
 
+def precheck_pdf(pdf_path: str, max_pages: int = 60):
+    """上传前快速本地校验(零 token、秒级),拦掉浪费内存/算力的 PDF。
+    返回 (ok: bool, reason: str)。判据:页数、文字层(防扫描版)、是否像行测试卷。"""
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception:
+        return False, "PDF 打不开,文件可能已损坏"
+    n = len(doc)
+    if n == 0:
+        return False, "这份 PDF 是空的"
+    if n > max_pages:
+        return False, f"PDF 共 {n} 页,超过上限 {max_pages} 页;请拆分后分批上传"
+    # 只读前若干页(够判断、不整本大书全读)
+    text = "".join(doc[i].get_text() for i in range(min(n, 25)))
+    compact = re.sub(r'\s', '', text)
+    if len(compact) < 200:
+        return False, ("没检测到文字层(疑似扫描件/纯图片 PDF)。扫描版需逐页识别、"
+                       "极耗算力,暂不支持;请上传带文字的电子版试卷")
+    qnums = ai.detect_qnums(text)                       # 题号锚点(行测一套上百题)
+    opt_hits = len(re.findall(r'[ABCDＡ-Ｄ][\.、．]', text))  # 选项标记
+    kw = sum(1 for w in ("言语", "数量", "判断", "资料分析", "常识", "图形",
+                         "逻辑", "类比", "定义", "推理", "行测", "公务员") if w in text)
+    if len(qnums) < 8 and opt_hits < 10:
+        return False, "没检测到足够的题目(题号/选项太少),可能不是行测试卷"
+    if opt_hits < 5 and kw == 0:
+        return False, "内容不像行测试卷(缺少选项与行测题型特征)"
+    return True, f"页数 {n} / 题号 {len(qnums)} / 选项 {opt_hits}"
+
+
 def _set(job_id, **kw):
     db = SessionLocal()
     try:
@@ -93,8 +122,9 @@ def run(job_id: int):
     job = db.get(IngestionJob, job_id)
     pdf_path, scope, source, uid = job.file_path, job.scope, job.file_name, job.user_id
     db.close()
-    # 用户私有库:无管理员审核环节,抠图/资料分析题直接入池
-    auto_ok = scope.startswith("user:")
+    # 抠图/资料分析题直接入池:公共库与私有库都不再卡"待确认"人工审核
+    # (抠图已足够稳定;个别瑕疵题可在题库管理里单独处理,不必整批挡在审核外)
+    auto_ok = True
     paper_id = 0
 
     try:
@@ -247,7 +277,7 @@ def run(job_id: int):
                           difficulty=diff, content=textutil.clean_text(body, doc_noise),
                           fingerprint=fp,
                           has_image=1, confidence=conf,
-                          status=1 if auto_ok else 0)  # 公共库待确认,私库直接入池
+                          status=1 if auto_ok else 0)  # auto_ok=True:统一直接入池
             db.add(qe)
             db.commit()
             qid = qe.id
@@ -311,7 +341,7 @@ def run(job_id: int):
                               fingerprint=fp,
                               has_image=1 if (mat_imgs or opt_imgs) else 0,
                               confidence=60,
-                              status=1 if auto_ok else 0)  # 公共库待确认,私库直接入池
+                              status=1 if auto_ok else 0)  # auto_ok=True:统一直接入池
                 db.add(qe)
                 db.commit()
                 qid = qe.id

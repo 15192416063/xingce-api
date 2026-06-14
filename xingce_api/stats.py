@@ -5,7 +5,7 @@ import time
 import threading
 from datetime import date
 
-from db import SessionLocal, StatDaily, VisitDay, TokenStat
+from db import SessionLocal, StatDaily, VisitDay, TokenStat, ChatLog
 
 _lock = threading.Lock()
 ONLINE = {}           # user_id -> 最后活跃时间戳
@@ -66,6 +66,58 @@ def record_visit(user_id: int = 0):
 
 def record_chat():
     _bump(chat_count=1)
+
+
+def add_dwell(user_id: int, sec: int):
+    """累计某用户当日停留秒数(前端心跳上报)。单次限幅,防刷。"""
+    sec = int(sec or 0)
+    if not user_id or sec <= 0 or sec > 600:
+        return
+    try:
+        db = SessionLocal()
+        day = _today()
+        row = db.query(VisitDay).filter(VisitDay.user_id == user_id,
+                                        VisitDay.day == day).first()
+        if not row:
+            row = VisitDay(user_id=user_id, day=day)
+            db.add(row)
+        row.dwell_sec = (row.dwell_sec or 0) + sec
+        db.commit()
+        db.close()
+    except Exception:
+        pass
+
+
+def log_chat(user_id: int, message: str, reply: str, category: str = "",
+             is_paste: int = 0) -> int:
+    """记一条对话流水,返回 chat_id(供前端点赞/点踩回填);失败返回 0。"""
+    try:
+        db = SessionLocal()
+        cl = ChatLog(user_id=user_id, message=(message or "")[:4000],
+                     reply=(reply or "")[:4000], category=(category or "")[:64],
+                     is_paste=1 if is_paste else 0)
+        db.add(cl)
+        db.commit()
+        cid = cl.id
+        db.close()
+        return cid
+    except Exception:
+        return 0
+
+
+def set_feedback(user_id: int, chat_id: int, value: int) -> bool:
+    """对话点赞(1)/点踩(-1)/取消(0)。只能改自己的对话。"""
+    try:
+        db = SessionLocal()
+        cl = db.get(ChatLog, chat_id)
+        ok = bool(cl and cl.user_id == user_id)
+        if ok:
+            cl.feedback = 1 if value > 0 else (-1 if value < 0 else 0)
+            db.commit()
+        db.close()
+        return ok
+    except Exception:
+        return False
 
 
 def record_tokens(tokens_in: int, tokens_out: int,

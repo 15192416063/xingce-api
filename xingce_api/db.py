@@ -269,11 +269,25 @@ class StatDaily(Base):
 
 
 class VisitDay(Base):
-    """用户-日 访问记录(算 UV/日活)"""
+    """用户-日 访问记录(算 UV/日活;dwell_sec 累计当日停留秒数,前端心跳上报)"""
     __tablename__ = "visit_day"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, index=True)
     day: Mapped[str] = mapped_column(String(10), index=True)
+    dwell_sec: Mapped[int] = mapped_column(Integer, default=0)   # 当日累计停留秒数
+
+
+class ChatLog(Base):
+    """AI 对话流水:每次对话存一条。供后台审计「聊了什么/粘了什么题」+ 点赞点踩。"""
+    __tablename__ = "chat_log"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    message: Mapped[str] = mapped_column(Text, default="")      # 用户输入
+    reply: Mapped[str] = mapped_column(Text, default="")        # AI 回复
+    category: Mapped[str] = mapped_column(String(64), default="")  # 识别到的题型
+    is_paste: Mapped[int] = mapped_column(Integer, default=0)   # 1=粘贴了完整题目
+    feedback: Mapped[int] = mapped_column(Integer, default=0)   # 1赞 / -1踩 / 0未评
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class TokenStat(Base):
