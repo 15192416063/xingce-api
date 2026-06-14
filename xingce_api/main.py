@@ -804,21 +804,24 @@ def ai_ask(payload: dict = Body(...), u: User = Depends(auth.current_user)):
     _ai_guard(u)
     opstats.record_chat()
     history = payload.get("history") or []
-    reply = ai.chat(msg, history)
-    analysis, items = {}, []
+    analysis, items, reply = {}, [], ""
     try:
-        # 省钱三段式:词表秒分类(免费) → 贴题才调 LLM → 闲聊不分析不推荐
-        c = ai.quick_classify(msg)
-        if not c and len(msg) > 60:
-            c = ai.classify(msg)
-        if c:
-            analysis = {"l1": c["l1"], "l2": c["l2"], "l3": c.get("l3", ""),
+        # 上下文感知:一次 LLM 调用读完整对话历史 → 既出辅导回复,
+        # 又判断"此刻该不该给题、给哪种题型"(理解"重新找/换个简单的/来点别的"等语境意图)
+        r = ai.chat_reco(msg, history)
+        reply = (r.get("reply") or "").strip()
+        if r.get("want") and r.get("l1"):
+            c = {"l1": r["l1"], "l2": r.get("l2", ""), "l3": "",
+                 "kp": r.get("l2") or r["l1"], "summary": r.get("summary") or msg}
+            analysis = {"l1": c["l1"], "l2": c["l2"], "l3": "",
                         "kp": c["kp"], "summary": c["summary"]}
             db = SessionLocal()
-            items = _mine_first_recommend(db, c, msg, u.id, k=6)
+            items = _mine_first_recommend(db, c, c["summary"], u.id, k=6)
             db.close()
     except Exception:
         pass
+    if not reply:                       # 兜底:结构化失败就退回纯对话
+        reply = ai.chat(msg, history)
     return {"reply": reply, "analysis": analysis, "items": items}
 
 

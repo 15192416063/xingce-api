@@ -451,3 +451,67 @@ def chat(message: str, history=None) -> str:
         return _invoke(msgs, scene="对话").strip()
     except Exception as e:
         return f"(AI 暂时不可用:{e})"
+
+
+def _last_topic(history):
+    """从对话历史里回溯最近一次提到的题型(连贯性兜底:'重新找'时沿用上一轮题型)。"""
+    for h in reversed(history or []):
+        if h.get("role") == "user":
+            c = quick_classify((h.get("content") or "")[:120])
+            if c:
+                return c
+    return None
+
+
+def chat_reco(message: str, history=None) -> dict:
+    """上下文感知:一次 LLM 调用读完整对话 → 出辅导回复 + 判断是否该给题、给哪种题型。
+    返回 {reply, want, l1, l2, summary}。比"逐句关键词匹配"更连贯——
+    "重新找/换个简单的/这个不对/来点别的"等都靠模型读上下文理解。
+    双保险:若模型没按 JSON 输出,就用它那段话当回复 + 从上下文推断题型,绝不丢意图。"""
+    # JSON 指令放最后(最强位置),不在后面再堆长文本,保证模型稳定吐 JSON
+    system = (
+        "你是专业的行测辅导老师,在和学生【连续多轮对话】。先读懂完整对话历史,"
+        "再判断学生这句话在上下文里的真实意图:\n"
+        "· '找错了/这个不对/重新找/换一道' = 换一道**同题型**的新题;\n"
+        "· '换个简单的/太难了' = 同题型更简单;'来点资料分析' = 切换到资料分析;\n"
+        "· 纯问方法/考点 = 只答疑、不给题(want=false)。\n"
+        f"l1 只能从 [{L1}] 里选;l2 是细分题型(如 图形推理/逻辑判断/逻辑填空/增长率/比重 等)。\n"
+        "reply 简洁口语、≤150字,绝不要自己编题或列 A/B/C/D 选项(题目由系统从真题库调取展示)。\n"
+        "【只输出】下面这个 JSON,不要输出任何其它文字:\n"
+        '{"reply":"给学生的话","want":true/false,"l1":"一级题型或空","l2":"二级题型或空","summary":"题型-考点检索摘要或空"}'
+    )
+    msgs = [{"role": "system", "content": system}]
+    for h in (history or [])[-6:]:    # 带最近 6 轮上下文(连贯性的来源)
+        if h.get("role") in ("user", "assistant") and h.get("content"):
+            msgs.append({"role": h["role"], "content": h["content"][:600]})
+    msgs.append({"role": "user", "content": message[:2000]})
+    try:
+        raw = _invoke(msgs, scene="对话").strip()
+    except Exception as e:
+        return {"reply": f"(AI 暂时不可用:{e})", "want": False, "l1": "", "l2": "", "summary": ""}
+    resp = raw.replace("```json", "").replace("```", "").strip()
+    data = {}
+    try:
+        data = json.loads(resp)
+    except Exception:
+        m = re.search(r'\{.*\}', resp, re.DOTALL)
+        if m:
+            try:
+                data = json.loads(m.group(0))
+            except Exception:
+                data = {}
+    if not isinstance(data, dict) or "reply" not in data:
+        # 模型只回了对话文本、没给 JSON → 用它当回复,意图靠上下文兜底推断
+        c = quick_classify(message) or _last_topic(history)
+        return {"reply": (raw[:600] or "好的。"), "want": bool(c),
+                "l1": c["l1"] if c else "", "l2": (c.get("l2") if c else "") or "",
+                "summary": (c.get("summary") if c else "") or message}
+    l1 = (data.get("l1") or "").strip()
+    if l1 not in config.CATEGORIES_L1:    # 题型越界 = 不推荐,避免乱调
+        l1 = ""
+    return {
+        "reply": (data.get("reply") or "").strip() or "好的。",
+        "want": bool(data.get("want")) and bool(l1),
+        "l1": l1, "l2": (data.get("l2") or "").strip(),
+        "summary": (data.get("summary") or "").strip(),
+    }
