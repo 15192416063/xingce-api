@@ -432,6 +432,42 @@ JSON:"""
             "explanation": (data.get("explanation") or "").strip()[:2000]}
 
 
+def explain(content: str, answer: str, material: str = "") -> str:
+    """已知正确答案,只生成解析(不让 AI 猜答案 → 解析必定对着正确答案讲,可靠)。
+    用自己的话讲、不复制教辅原文(避免版权);结果入库后全员共享、不重复花 token。"""
+    mat = f"【材料】{material[:1500]}\n" if material else ""
+    prompt = f"""你是行测名师。下面这道题的【正确答案是 {answer}】。请只写解析:
+- 先点明题型与考点,再给清晰推理过程,说明为什么选 {answer}
+- 150 字以内,用你自己的话讲,**不要复制任何教辅/书本原文**
+- 只输出解析文本,不要 JSON、不要重复题目与选项
+{mat}【题目】{content[:2500]}
+解析:"""
+    try:
+        return _invoke(prompt, scene="AI解析").strip()[:2000]
+    except Exception:
+        return ""
+
+
+def update_memory(profile: str, recent_text: str) -> str:
+    """把最近对话里关于学生的【长期有用】信息合并进学习档案(Markdown)。
+    只记稳定事实(考试经历/薄弱擅长/目标习惯/偏好),删过时的,不记一次性闲聊。"""
+    prompt = f"""你在维护一名学生的"学习档案"(Markdown,用于个性化辅导)。
+下面是【现有档案】和【最近对话】。把对话里关于学生的**长期有用**信息合并进档案:
+是否考过公务员/事业编及成绩、薄弱/擅长题型、学习目标与习惯、偏好等。
+规则:只保留稳定事实;删除过时信息;不要记一次性闲聊;档案精简(≤400字)、分点。
+只输出更新后的 Markdown 档案本身,不要任何解释。
+【现有档案】
+{profile or '(空)'}
+【最近对话】
+{recent_text[:3000]}
+更新后的档案:"""
+    try:
+        out = _invoke(prompt, scene="用户档案").strip()
+        return out[:1500] if out else profile
+    except Exception:
+        return profile
+
+
 def chat(message: str, history=None) -> str:
     """行测辅导对话:简洁、专业地答疑/讲解方法/分析考点。"""
     msgs = [{"role": "system",
@@ -463,20 +499,30 @@ def _last_topic(history):
     return None
 
 
-def chat_reco(message: str, history=None) -> dict:
+def chat_reco(message: str, history=None, profile: str = "") -> dict:
     """上下文感知:一次 LLM 调用读完整对话 → 出辅导回复 + 判断是否该给题、给哪种题型。
-    返回 {reply, want, l1, l2, summary}。比"逐句关键词匹配"更连贯——
-    "重新找/换个简单的/这个不对/来点别的"等都靠模型读上下文理解。
-    双保险:若模型没按 JSON 输出,就用它那段话当回复 + 从上下文推断题型,绝不丢意图。"""
-    # JSON 指令放最后(最强位置),不在后面再堆长文本,保证模型稳定吐 JSON
+    profile=该用户的"学习档案"(类 Claude memory),用于个性化与新用户引导。
+    返回 {reply, want, l1, l2, summary}。"""
+    persona = (
+        f"【你已了解的学生情况】\n{profile.strip()}\n请结合这些因材施教(不必每次提起)。\n"
+        if profile.strip() else
+        "【这是新学生,你还不了解TA】可在回复里自然、友好地问一两句以便因材施教"
+        "(如:之前考过公务员/事业编吗?成绩如何?觉得哪部分最没把握?),"
+        "学生不愿答就别追问、正常帮TA答疑/练题。\n")
+    # JSON 指令放最后(最强位置),保证模型稳定吐 JSON
     system = (
-        "你是专业的行测辅导老师,在和学生【连续多轮对话】。先读懂完整对话历史,"
-        "再判断学生这句话在上下文里的真实意图:\n"
+        "你是专业的行测辅导老师,在和学生【连续多轮对话】。先读懂完整对话历史与意图。\n"
+        + persona +
+        "意图判断:\n"
         "· '找错了/这个不对/重新找/换一道' = 换一道**同题型**的新题;\n"
-        "· '换个简单的/太难了' = 同题型更简单;'来点资料分析' = 切换到资料分析;\n"
-        "· 纯问方法/考点 = 只答疑、不给题(want=false)。\n"
+        "· '换个简单的/太难了' = 同题型更简单;'来点资料分析' = 切换题型;\n"
+        "· 问方法/考点/概念 = 只答疑不给题(want=false);要题/练习 = want=true。\n"
         f"l1 只能从 [{L1}] 里选;l2 是细分题型(如 图形推理/逻辑判断/逻辑填空/增长率/比重 等)。\n"
-        "reply 简洁口语、≤150字,绝不要自己编题或列 A/B/C/D 选项(题目由系统从真题库调取展示)。\n"
+        "reply 写法(关键):\n"
+        "· 学生在**问方法/考点/概念**时,要讲得**详实、有逻辑、分点**:点明适用情形→解题步骤→"
+        "口诀或一句话举例,把'为什么'讲透,可到 400 字;\n"
+        "· 学生**要题/练习**时,只简短一两句说明给TA推荐哪类题(题目由系统从真题库调取),"
+        "**绝不要自己编题或列 A/B/C/D 选项**。\n"
         "【只输出】下面这个 JSON,不要输出任何其它文字:\n"
         '{"reply":"给学生的话","want":true/false,"l1":"一级题型或空","l2":"二级题型或空","summary":"题型-考点检索摘要或空"}'
     )

@@ -1325,6 +1325,7 @@ async function showUser(id){let r;try{r=await j('/api/admin/users/'+id);}catch(e
    <div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:0;font-size:16px">${esc(u.nickname||u.username)} · 行为画像</h3>
     <span class="chatact" onclick="this.closest('.umask').remove()">关闭 ✕</span></div>
    <div class="muted" style="font-size:12px;margin:4px 0 10px">${esc(u.username)} · 注册 ${u.created_at} · 对话 ${u.chat_count} · 私有题 ${u.mine_count}</div>
+   ${r.memory?`<b>学习档案(AI 自动维护)</b><div style="white-space:pre-wrap;background:#f6f5ee;border-radius:8px;padding:8px 10px;font-size:13px;margin:4px 0 10px">${esc(r.memory)}</div>`:''}
    <b>每日停留</b><div style="font-size:12px;margin:4px 0 10px">${daily}</div>
    <b>登录记录</b><div style="margin:4px 0 10px">${logins}</div>
    <b>对话记录(最近100)</b><div style="max-height:240px;overflow:auto;margin:4px 0 10px">${chats}</div>

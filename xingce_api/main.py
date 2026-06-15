@@ -28,7 +28,8 @@ import security
 from db import (init_db, SessionLocal, IngestionJob, Question, QuestionImage,
                 PracticeRecord, WrongBook, MaterialGroup, Favorite, User, News,
                 AiUsage, StatDaily, VisitDay, LoginLog, Setting, AuditLog, AiChannel,
-                Paper, InviteCode, ExamInfo, MockExam, TokenStat, ChatLog, Feedback)
+                Paper, InviteCode, ExamInfo, MockExam, TokenStat, ChatLog, Feedback,
+                UserMemory)
 import exams
 
 # ---- 错误日志:轮转文件,排障不靠猜(稳定性) ----
@@ -517,20 +518,23 @@ def submit(question_id: int = Form(...), user_answer: str = Form(...),
 
 @app.post("/api/questions/{qid}/ai-answer")
 def ai_answer(qid: int, u: User = Depends(auth.current_user)):
-    """无答案的题让 AI 生成答案+解析(标 origin=ai,生成一次全员共享)。"""
+    """获取解析。优先级:
+    1) 已有解析 → 直接返回(全员共享,不重复花 token);
+    2) 有正确答案但无解析 → 把【正确答案】喂给 AI,只生成解析(对着正确答案讲,可靠、避版权);
+    3) 完全没答案 → AI 解题(猜答案,标 origin=ai,前端提示"仅供参考")。
+    解析一律入库,后续任何人查同题直接命中。"""
     db = SessionLocal()
     q = db.get(Question, qid)
     if not q or q.status != 1 or \
             (q.scope != "public" and q.scope != f"user:{u.id}"):
         db.close()
         raise HTTPException(404, "题不存在")
-    if (q.answer or "").strip() and q.answer_origin != "ai":
+    # 1) 已有解析 → 直接复用
+    if (q.explanation or "").strip():
+        ans, exp, origin = q.answer, q.explanation, q.answer_origin or "official"
         db.close()
-        raise HTTPException(409, "本题已有官方答案")
-    if (q.answer or "").strip() and q.answer_origin == "ai":
-        ans, exp = q.answer, q.explanation     # 已生成过,直接复用(不重复烧钱)
-        db.close()
-        return {"answer": ans, "explanation": exp, "origin": "ai", "cached": True}
+        return {"answer": ans, "explanation": exp, "origin": origin, "cached": True}
+    ans = (q.answer or "").strip()
     material = ""
     if q.material_id:
         mg = db.get(MaterialGroup, q.material_id)
@@ -538,6 +542,19 @@ def ai_answer(qid: int, u: User = Depends(auth.current_user)):
     content, mid = q.content, q.id
     db.close()
     _ai_guard(u)
+    if ans:
+        # 2) 有正确答案 → 只让 AI 写解析(不猜答案,解析必对着正确答案)
+        exp = ai.explain(content, ans, material)
+        if not exp:
+            raise HTTPException(422, "解析生成失败,请稍后重试")
+        db = SessionLocal()
+        q = db.get(Question, mid)
+        q.explanation = exp
+        origin = q.answer_origin or "official"
+        db.commit()
+        db.close()
+        return {"answer": ans, "explanation": exp, "origin": origin, "cached": False}
+    # 3) 没有答案 → AI 解题(猜)
     r = ai.solve(content, material)
     if not r["answer"]:
         raise HTTPException(422, "AI 无法确定本题答案(图形题/信息不足),建议上传官方答案")
@@ -545,8 +562,7 @@ def ai_answer(qid: int, u: User = Depends(auth.current_user)):
     q = db.get(Question, mid)
     q.answer = r["answer"]
     q.answer_origin = "ai"
-    if r["explanation"] and not (q.explanation or "").strip():
-        q.explanation = r["explanation"]
+    q.explanation = r["explanation"]
     if q.paper_id:
         db.flush()
         p = db.get(Paper, q.paper_id)
@@ -806,21 +822,68 @@ def _mine_first_recommend(db, c, msg, uid, k=6):
     return picked
 
 
+def _user_memory(uid: int) -> str:
+    db = SessionLocal()
+    m = db.query(UserMemory).filter(UserMemory.user_id == uid).first()
+    content = m.content if m else ""
+    db.close()
+    return content
+
+
+def _bump_memory_turn(uid: int) -> int:
+    db = SessionLocal()
+    m = db.query(UserMemory).filter(UserMemory.user_id == uid).first()
+    if not m:
+        m = UserMemory(user_id=uid, content="")
+        db.add(m)
+    m.turns = (m.turns or 0) + 1
+    t = m.turns
+    db.commit()
+    db.close()
+    return t
+
+
+def _update_user_memory(uid: int):
+    """后台:用最近对话更新该用户学习档案(已节流,不是每轮都调)。"""
+    db = SessionLocal()
+    m = db.query(UserMemory).filter(UserMemory.user_id == uid).first()
+    profile = m.content if m else ""
+    chats = (db.query(ChatLog).filter(ChatLog.user_id == uid)
+             .order_by(ChatLog.id.desc()).limit(12).all())
+    db.close()
+    recent = "\n".join(f"学生:{c.message}\n老师:{c.reply}" for c in reversed(chats))
+    if not recent.strip():
+        return
+    new = ai.update_memory(profile, recent)
+    if not new or new == profile:
+        return
+    db = SessionLocal()
+    m = db.query(UserMemory).filter(UserMemory.user_id == uid).first()
+    if not m:
+        m = UserMemory(user_id=uid)
+        db.add(m)
+    m.content = new
+    db.commit()
+    db.close()
+
+
 @app.post("/api/ai/ask")
-def ai_ask(payload: dict = Body(...), u: User = Depends(auth.current_user)):
+def ai_ask(payload: dict = Body(...), background: BackgroundTasks = None,
+           u: User = Depends(auth.current_user)):
     """和 AI 对话 + 按你说的内容/贴的题,自动分析考点并推荐对应的题(动态,非固定)。
-    推荐优先调用户自己上传的题(私有题库),不够再从公共库补。"""
+    推荐优先调用户自己上传的题(私有题库),不够再从公共库补。
+    个性化:注入该用户学习档案(类 Claude memory),并定期(节流)后台更新档案。"""
     msg = (payload.get("message") or "").strip()[:4000]
     if not msg:
         raise HTTPException(400, "请输入内容")
     _ai_guard(u)
     opstats.record_chat()
     history = payload.get("history") or []
+    profile = _user_memory(u.id)
     analysis, items, reply = {}, [], ""
     try:
-        # 上下文感知:一次 LLM 调用读完整对话历史 → 既出辅导回复,
-        # 又判断"此刻该不该给题、给哪种题型"(理解"重新找/换个简单的/来点别的"等语境意图)
-        r = ai.chat_reco(msg, history)
+        # 上下文感知 + 个性化:读完整对话 + 学习档案 → 出辅导回复 + 判断是否/给哪种题
+        r = ai.chat_reco(msg, history, profile)
         reply = (r.get("reply") or "").strip()
         if r.get("want") and r.get("l1"):
             c = {"l1": r["l1"], "l2": r.get("l2", ""), "l3": "",
@@ -839,6 +902,10 @@ def ai_ask(payload: dict = Body(...), u: User = Depends(auth.current_user)):
     chat_id = opstats.log_chat(u.id, msg, reply,
                                category=(analysis.get("l2") or analysis.get("l1") or ""),
                                is_paste=is_paste)
+    # 节流更新学习档案:第2轮先建档,之后每6轮刷新一次(后台跑,不拖慢回复、省 token)
+    turns = _bump_memory_turn(u.id)
+    if background is not None and (turns == 2 or turns % 6 == 0):
+        background.add_task(_update_user_memory, u.id)
     return {"reply": reply, "analysis": analysis, "items": items, "chat_id": chat_id}
 
 
@@ -1764,12 +1831,14 @@ def admin_user_detail(uid: int, admin: User = Depends(auth.require_admin)):
     daily = [{"day": v.day, "dwell_min": round((v.dwell_sec or 0) / 60)}
              for v in db.query(VisitDay).filter(VisitDay.user_id == uid)
              .order_by(VisitDay.day.desc()).limit(30).all()]
+    mem = db.query(UserMemory).filter(UserMemory.user_id == uid).first()
+    memory = mem.content if mem else ""
     info = {"id": u.id, "username": u.username, "nickname": u.nickname or "",
             "role": u.role, "status": u.status,
             "created_at": u.created_at.strftime("%Y-%m-%d") if u.created_at else "",
             "chat_count": len(chats), "mine_count": len(mineq)}
     db.close()
-    return {"user": info, "chats": chats, "questions": mineq,
+    return {"user": info, "memory": memory, "chats": chats, "questions": mineq,
             "logins": logins, "daily": daily}
 
 

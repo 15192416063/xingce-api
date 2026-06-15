@@ -277,6 +277,17 @@ class VisitDay(Base):
     dwell_sec: Mapped[int] = mapped_column(Integer, default=0)   # 当日累计停留秒数
 
 
+class UserMemory(Base):
+    """每用户的"学习档案"(类 Claude memory):AI 逐步了解到的用户情况,
+    每次对话注入个性化,定期由 AI 合并更新。content 为 Markdown。"""
+    __tablename__ = "user_memory"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    content: Mapped[str] = mapped_column(Text, default="")   # Markdown 档案
+    turns: Mapped[int] = mapped_column(Integer, default=0)   # 对话轮数(用于节流更新)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class Feedback(Base):
     """用户反馈:使用中遇到的问题/建议。后台可见,可选发邮件给管理员。"""
     __tablename__ = "feedback"
