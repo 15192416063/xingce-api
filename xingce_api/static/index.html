@@ -264,6 +264,10 @@ input:focus,select:focus{border-color:var(--green)}
 .srow{display:flex;align-items:center;gap:10px;margin:7px 0;flex-wrap:wrap}
 .srow>span:first-child{width:120px;font-size:13px;color:var(--ink)}
 .srow input{flex:1;min-width:180px;font-size:13px;padding:6px 9px;border:1.5px solid var(--line);border-radius:8px;font-family:inherit}
+.wexp{margin-top:8px;background:#fff;border-left:3px solid var(--green);border-radius:8px;padding:9px 11px;font-size:13px;line-height:1.75}
+.nudge{background:linear-gradient(90deg,#fff7e6,#fdf0d8);border:1px solid #f0d9a8;border-radius:10px;padding:9px 12px;font-size:13px;color:#7a5c1e;cursor:pointer;margin:2px 0 12px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.nudge .go{color:var(--orange);font-weight:600;white-space:nowrap}
+.nudge:hover{filter:brightness(.985)}
 .chatbox{display:flex;gap:8px;align-items:flex-end}
 .chatbox textarea{flex:1;height:54px;resize:vertical;padding:9px;border:1.5px solid var(--line);border-radius:10px;font-family:inherit;font-size:14px;background:#fff}
 .chatbox textarea:focus{outline:none;border-color:var(--green)}
@@ -660,6 +664,7 @@ async function toggleFav(id,el){const fd=new FormData();fd.append('question_id',
  const r=await j('/api/favorite/toggle',{method:'POST',body:fd});
  el.textContent=r.favorited?'★':'☆';el.classList.toggle('on',r.favorited);toast(r.favorited?'已收藏':'已取消');}
 let COMBO=0;
+let WRONG_COMBO=0;
 let QT={last:0};
 async function pickOpt(id,k,el){
  const box=$('#opts'+id);if(box.classList.contains('done'))return;
@@ -674,12 +679,23 @@ async function pickOpt(id,k,el){
     +` <button class="btn sm ghost" onclick="aiSolve(${id},'${k}')">${ic('spark',14)} 让 AI 解答</button>`;return;}
  [...box.children].forEach(c=>{const ck=c.querySelector('b').textContent;
    if(ck===(r.answer||'').toUpperCase())c.classList.add('correct');});
- if(r.correct){COMBO++;
+ if(r.correct){COMBO++;WRONG_COMBO=0;
    res.className='res ok';res.innerHTML='回答正确!'+aiTag+(r.explanation?'<br>解析:'+esc(r.explanation):'');
    if(COMBO>=2)toast(`连对 ${COMBO} 题,保持住!`);}
- else{COMBO=0;el.classList.remove('sel');el.classList.add('wrong');
-   res.className='res bad';res.innerHTML=`回答错误,已加入错题本。`+aiTag+(r.explanation?'<br>解析:'+esc(r.explanation):'');}
+ else{COMBO=0;WRONG_COMBO++;if(WRONG_COMBO>=3){toast('状态一般?换个简单模块找回节奏,别硬刚~');WRONG_COMBO=0;}
+   el.classList.remove('sel');el.classList.add('wrong');
+   res.className='res bad';res.innerHTML=`回答错误,已加入错题本。`+aiTag+(r.explanation?'<br>解析:'+esc(r.explanation):'')
+    +` <button class="btn sm ghost" onclick="explainWrong(${id},'${k}',this)">${ic('spark',14)} 为什么错?AI 讲解</button>`;}
 }
+async function explainWrong(id,myAns,btn){const res=$('#r'+id);
+ btn.disabled=true;const old=btn.innerHTML;btn.textContent='讲解中…';
+ let r;try{const fd=new FormData();fd.append('question_id',id);fd.append('user_answer',myAns);
+   r=await j('/api/practice/explain',{method:'POST',body:fd});}
+ catch(e){btn.disabled=false;btn.innerHTML=old;toast('讲解失败:'+e);return;}
+ if(r.detail){toast(r.detail);btn.disabled=false;btn.innerHTML=old;return;}
+ const tag=r.error_tag?`<span class="tag diff">错因·${esc(r.error_tag)}</span> `:'';
+ res.insertAdjacentHTML('beforeend',`<div class="wexp">${tag}<div style="margin-top:6px;white-space:pre-wrap">${esc(r.explanation)}</div>${r.remind?'<div style="margin-top:6px;color:var(--orange);font-weight:600">'+esc(r.remind)+'</div>':''}</div>`);
+ btn.remove();}
 async function aiSolve(id,myAns){const res=$('#r'+id);res.className='res info';
  const t0=Date.now();let timer=setInterval(()=>{const sec=Math.round((Date.now()-t0)/1000);
   res.innerHTML=`AI 解题中… ${sec}s <span class="muted">(首次约 3~10 秒,算出后会缓存,下次秒出且不再消耗 token)</span>`;},400);
@@ -860,11 +876,24 @@ V.home=async()=>{let s={},papers={count:0,items:[]},mine={count:0,by_category:{}
    <div class="ovrow"><span>累计做题</span><b>${s.done||0} 题</b></div>
    <div class="ovrow"><span>总正确率</span><b>${s.accuracy==null?'—':s.accuracy+'%'}</b></div>
    <div class="ovrow"><span>待复习错题</span><b>${s.wrong||0}</b></div>`;
+ // 主动关心(纯前端规则 + 数据,零 AI 成本):闲置模块 > 薄弱模块 > 当日首次
+ let nudgeBar='';
+ const _cats=(s.by_category||[]).filter(c=>c.done>=5);
+ const _idle=_cats.filter(c=>c.last_days!=null&&c.last_days>=7).sort((a,b)=>b.last_days-a.last_days)[0];
+ const _weak=_cats.filter(c=>c.accuracy!=null).sort((a,b)=>a.accuracy-b.accuracy)[0];
+ const _today=new Date().toDateString();const _first=localStorage.getItem('xc_lastday')!==_today;
+ try{localStorage.setItem('xc_lastday',_today);}catch(e){}
+ let _nt='',_nm='';
+ if(_idle){_nt=`「${_idle.name}」你 ${_idle.last_days} 天没碰了,练几道找回手感?`;_nm=_idle.name;}
+ else if(_weak&&_weak.accuracy<70){_nt=`继续攻克薄弱项「${_weak.name}」(正确率 ${_weak.accuracy}%)?`;_nm=_weak.name;}
+ else if(_first&&_weak){_nt=`欢迎回来,继续练「${_weak.name}」?`;_nm=_weak.name;}
+ if(_nt)nudgeBar=`<div class="nudge" onclick="suggest('来5道${_nm}')">💡 ${_nt} <span class="go">去练 →</span></div>`;
  return `<div class="proj">
   <div class="proj-main">
    ${cdown}
    <div style="margin:2px 0 12px"><div class="serif" style="font-size:24px;font-weight:700">${greet},今天也要上岸。</div>
     <div class="muted" style="margin-top:6px;font-size:13px">上传 PDF 攒题库,想练什么直接说。</div></div>
+   ${nudgeBar}
    ${goalbar}
    <div class="hcard" style="margin-top:12px">
      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -1206,10 +1235,27 @@ V.news=async()=>{const r=await j('/api/news');let h='';
  for(const n of r.items)h+=`<div class="news-it"><span class="cat">${n.category}</span><div><b>${esc(n.title)}</b><div class="muted" style="font-size:12px;margin:3px 0">${n.date}</div><div style="color:#5b6157">${esc(n.summary||n.content).slice(0,200)}</div>${n.url?`<a href="${n.url}" target="_blank" class="muted">原文链接 →</a>`:''}</div></div>`;
  if(!h)h='<div class="muted center">暂无资讯,管理员可在「运营管理」发布</div>';
  return `<h2 class="page">考试资讯</h2><div class="card">${h}</div>`;};
+function heatColor(a){if(a==null)return '#cfd8cf';return `hsl(${Math.round(a*1.2)},58%,50%)`;}
+const ETCOLORS={'概念不清':'#e06c5a','审题失误':'#e0a23a','计算错误':'#3a7ad0','时间不够':'#7d5ad0','蒙错':'#9aa29a'};
+function accTrendSVG(a){if(!a||!a.length)return '<div class="muted center" style="padding:24px 0">还没做题数据,练几道就有趋势了</div>';
+ const W=320,H=120,P=26,bottom=H-16;const xs=a.length>1?(W-P*2)/(a.length-1):0;
+ const pt=(d,i)=>[P+i*xs, bottom-(d.acc/100)*(bottom-22)];
+ const pts=a.map(pt);const poly=pts.map(p=>p[0].toFixed(0)+','+p[1].toFixed(0)).join(' ');
+ let g='';for(const yv of [0,50,100])g+=`<line x1="${P}" y1="${(bottom-yv/100*(bottom-22)).toFixed(0)}" x2="${W-P}" y2="${(bottom-yv/100*(bottom-22)).toFixed(0)}" stroke="#eceadf"/><text x="2" y="${(bottom-yv/100*(bottom-22)+3).toFixed(0)}" font-size="8" fill="#9aa29a">${yv}</text>`;
+ const dots=pts.map((p,i)=>`<circle cx="${p[0].toFixed(0)}" cy="${p[1].toFixed(0)}" r="3" fill="#2e5a3f"/><text x="${p[0].toFixed(0)}" y="${(p[1]-6).toFixed(0)}" font-size="9" text-anchor="middle" fill="#2e5a3f">${a[i].acc}</text>`).join('');
+ const lab=a.map((d,i)=>`<text x="${pts[i][0].toFixed(0)}" y="${H-3}" font-size="8" text-anchor="middle" fill="#9aa29a">${d.date}</text>`).join('');
+ return `<svg viewBox="0 0 ${W} ${H}" style="width:100%">${g}<polyline points="${poly}" fill="none" stroke="#2e5a3f" stroke-width="2"/>${dots}${lab}</svg>`;}
+function errorPieSVG(a){if(!a||!a.length)return '<div class="muted center" style="padding:20px 0">暂无错因数据<br><span style="font-size:12px">做错题时点「为什么错」即可自动归类</span></div>';
+ const total=a.reduce((s,x)=>s+x.count,0);let ang=-Math.PI/2,paths='';const cx=55,cy=55,r=46,ri=25;
+ a.forEach(x=>{const a2=ang+x.count/total*2*Math.PI,col=ETCOLORS[x.tag]||'#bbb';
+   const x1=cx+r*Math.cos(ang),y1=cy+r*Math.sin(ang),x2=cx+r*Math.cos(a2),y2=cy+r*Math.sin(a2),lg=(a2-ang)>Math.PI?1:0;
+   paths+=`<path d="M${cx} ${cy} L${x1.toFixed(1)} ${y1.toFixed(1)} A${r} ${r} 0 ${lg} 1 ${x2.toFixed(1)} ${y2.toFixed(1)} Z" fill="${col}"/>`;ang=a2;});
+ const lgd=a.map(x=>`<div style="display:flex;align-items:center;gap:6px;font-size:12px;margin:3px 0"><span style="width:10px;height:10px;border-radius:2px;background:${ETCOLORS[x.tag]||'#bbb'}"></span>${x.tag} ${x.count} (${Math.round(x.count/total*100)}%)</div>`).join('');
+ return `<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap"><svg viewBox="0 0 110 110" style="width:104px;flex:none">${paths}<circle cx="${cx}" cy="${cy}" r="${ri}" fill="#fff"/></svg><div>${lgd}</div></div>`;}
 V.stats=async()=>{const s=await j('/api/stats');const acc=s.accuracy==null?'—':s.accuracy+'%';
  let mocks={count:0,items:[]};try{mocks=await j('/api/mock/history');}catch(e){}
  let cats='';for(const c of (s.by_category||[]).sort((a,b)=>b.done-a.done)){const p=c.accuracy==null?0:c.accuracy;
-   cats+=`<div class="barrow"><span class="nm">${c.name}</span><div class="bar" style="flex:1"><i style="width:${p}%"></i></div><span class="pct" style="width:110px">${c.accuracy==null?c.done+'题':p+'%'}${c.avg_sec?' · '+c.avg_sec+'s/题':''}</span></div>`;}
+   cats+=`<div class="barrow"><span class="nm">${c.name}</span><div class="bar" style="flex:1"><i style="width:${p}%;background:${heatColor(c.accuracy)}"></i></div><span class="pct" style="width:110px">${c.accuracy==null?c.done+'题':p+'%'}${c.avg_sec?' · '+c.avg_sec+'s/题':''}</span></div>`;}
  if(!cats)cats='<div class="muted center">还没刷题,去题型刷题开始吧</div>';
  const mx=Math.max(1,...(s.trend||[]).map(t=>t.count));let tr='';
  for(const t of (s.trend||[]))tr+=`<div class="col"><div class="bk" style="height:${t.count/mx*72}px"></div><div class="dt">${t.date}</div></div>`;
@@ -1229,8 +1275,11 @@ V.stats=async()=>{const s=await j('/api/stats');const acc=s.accuracy==null?'—'
      <div class="stat"><div class="n" data-cu="${s.done}">0</div><div class="l">累计做题</div></div>
      <div class="stat"><div class="n ok">${acc}</div><div class="l">总正确率</div></div></div></div>
  <div class="grid g2">
-   <div class="card"><b>各题型掌握度</b><div style="margin-top:10px">${cats}</div></div>
+   <div class="card"><b>各题型掌握度</b> <span class="muted" style="font-size:12px">绿=强 红=弱</span><div style="margin-top:10px">${cats}</div></div>
    <div class="card"><b>近 7 天做题量</b><div class="trend">${tr}</div></div></div>
+ <div class="grid g2">
+   <div class="card"><b>正确率趋势</b> <span class="muted" style="font-size:12px">看自己在变强</span><div style="margin-top:8px">${accTrendSVG(s.acc_trend)}</div></div>
+   <div class="card"><b>错因分布</b> <span class="muted" style="font-size:12px">为什么丢分</span><div style="margin-top:8px">${errorPieSVG(s.error_tags)}</div></div></div>
  ${mocks.count?`<div class="card"><b>模考记录</b><div style="margin-top:8px">${mocks.items.map(m=>`
    <div style="display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid #f0efe6;font-size:13px;flex-wrap:wrap">
     <b style="color:${m.score>=60?'var(--ok)':'var(--bad)'};font-size:16px;width:52px;font-family:var(--serif)">${m.score}分</b>

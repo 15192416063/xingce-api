@@ -29,7 +29,7 @@ from db import (init_db, SessionLocal, IngestionJob, Question, QuestionImage,
                 PracticeRecord, WrongBook, MaterialGroup, Favorite, User, News,
                 AiUsage, StatDaily, VisitDay, LoginLog, Setting, AuditLog, AiChannel,
                 Paper, InviteCode, ExamInfo, MockExam, TokenStat, ChatLog, Feedback,
-                UserMemory)
+                UserMemory, WrongExplain)
 import exams
 
 # ---- 错误日志:轮转文件,排障不靠猜(稳定性) ----
@@ -516,6 +516,54 @@ def submit(question_id: int = Form(...), user_answer: str = Form(...),
             "explanation": exp, "answer_origin": origin}
 
 
+@app.post("/api/practice/explain")
+def practice_explain(question_id: int = Form(...), user_answer: str = Form(""),
+                     u: User = Depends(auth.current_user)):
+    """讲错题(P0):三层 = 为什么错(针对作答) + 考点归属 + 同类提醒(历史错误次数);
+    顺手判错因标签。按(题,错项)缓存,同样错法全员复用,只在首次花一次 API。"""
+    db = SessionLocal()
+    q = db.get(Question, question_id)
+    if not q or not (q.answer or "").strip():
+        db.close()
+        raise HTTPException(400, "本题暂无标准答案,无法讲解")
+    ua = (user_answer or "").strip().upper()[:8]
+    correct = q.answer.strip().upper()
+    topic = f"{q.category_l1}/{q.category_l2}" if q.category_l2 else (q.category_l1 or "行测")
+    content, l2, qid = q.content, q.category_l2, q.id
+    # 同考点历史错误次数(本用户、同二级题型、答错)——含本次,显示时减 1
+    hist = ((db.query(PracticeRecord)
+             .join(Question, Question.id == PracticeRecord.question_id)
+             .filter(PracticeRecord.user_id == u.id, PracticeRecord.is_correct == 0,
+                     Question.category_l2 == l2).count()) if l2 else 0)
+    cached = (db.query(WrongExplain)
+              .filter(WrongExplain.qid == qid, WrongExplain.user_answer == ua).first())
+    text, tag = (cached.content, cached.error_tag) if cached else ("", "")
+    db.close()
+    if not cached:
+        _ai_guard(u)
+        r = ai.explain_wrong(content, correct, ua, topic)
+        text, tag = r["explanation"], r["error_tag"]
+        if not text:
+            raise HTTPException(422, "讲解生成失败,请重试")
+        db = SessionLocal()
+        db.add(WrongExplain(qid=qid, user_answer=ua, content=text, error_tag=tag))
+        db.commit()
+        db.close()
+    if tag:   # 给本用户该题最近一次作答打错因标签(缓存命中也打,不额外花钱)
+        db = SessionLocal()
+        pr = (db.query(PracticeRecord)
+              .filter(PracticeRecord.user_id == u.id, PracticeRecord.question_id == qid)
+              .order_by(PracticeRecord.id.desc()).first())
+        if pr and not (pr.error_tag or ""):
+            pr.error_tag = tag
+            db.commit()
+        db.close()
+    prior = max(0, hist - 1)
+    remind = f"💡 这个考点你之前也错过 {prior} 次,这次把它记牢。" if prior > 0 else ""
+    return {"explanation": text, "error_tag": tag, "remind": remind,
+            "topic": topic, "cached": bool(cached)}
+
+
 @app.post("/api/questions/{qid}/ai-answer")
 def ai_answer(qid: int, u: User = Depends(auth.current_user)):
     """获取解析。优先级:
@@ -830,6 +878,44 @@ def _user_memory(uid: int) -> str:
     return content
 
 
+def _learning_snapshot(uid: int) -> str:
+    """该用户实时学情:总/各模块正确率 + 错题分布。纯 DB 计算,不花 token,注入对话。"""
+    db = SessionLocal()
+    try:
+        rows = (db.query(Question.category_l1, PracticeRecord.is_correct)
+                .join(PracticeRecord, PracticeRecord.question_id == Question.id)
+                .filter(PracticeRecord.user_id == uid,
+                        PracticeRecord.is_correct.in_([0, 1])).all())
+        wrong = (db.query(Question.category_l1, func.count(WrongBook.id))
+                 .join(WrongBook, WrongBook.question_id == Question.id)
+                 .filter(WrongBook.user_id == uid, WrongBook.mastered == 0)
+                 .group_by(Question.category_l1)
+                 .order_by(func.count(WrongBook.id).desc()).all())
+    finally:
+        db.close()
+    if not rows and not wrong:
+        return ""
+    agg = {}
+    for l1, c in rows:
+        a = agg.setdefault(l1 or "其他", [0, 0])
+        a[0] += 1
+        a[1] += 1 if c == 1 else 0
+    lines = []
+    if rows:
+        total = len(rows)
+        correct = sum(1 for _, c in rows if c == 1)
+        lines.append(f"累计做 {total} 题,总正确率 {round(correct * 100 / total)}%。")
+        mod = "、".join(f"{k} {round(v[1] * 100 / v[0])}%({v[0]}题)"
+                       for k, v in sorted(agg.items(), key=lambda x: -x[1][0]))
+        if mod:
+            lines.append("各模块正确率:" + mod + "。")
+    if wrong:
+        wn = sum(n for _, n in wrong)
+        top = "、".join(f"{(l1 or '其他')}({n})" for l1, n in wrong[:4])
+        lines.append(f"错题本 {wn} 道未掌握,主要在:{top}。")
+    return "\n".join(lines)
+
+
 def _bump_memory_turn(uid: int) -> int:
     db = SessionLocal()
     m = db.query(UserMemory).filter(UserMemory.user_id == uid).first()
@@ -880,10 +966,11 @@ def ai_ask(payload: dict = Body(...), background: BackgroundTasks = None,
     opstats.record_chat()
     history = payload.get("history") or []
     profile = _user_memory(u.id)
+    learning = _learning_snapshot(u.id)
     analysis, items, reply = {}, [], ""
     try:
-        # 上下文感知 + 个性化:读完整对话 + 学习档案 → 出辅导回复 + 判断是否/给哪种题
-        r = ai.chat_reco(msg, history, profile)
+        # 上下文感知 + 个性化 + 实时学情:读对话 + 档案 + 做题数据 → 辅导回复 + 是否/给哪种题
+        r = ai.chat_reco(msg, history, profile, learning)
         reply = (r.get("reply") or "").strip()
         if r.get("want") and r.get("l1"):
             c = {"l1": r["l1"], "l2": r.get("l2", ""), "l3": "",
@@ -1504,10 +1591,30 @@ def stats(u: User = Depends(auth.current_user)):
         if r.time_ms:
             c["timed"] += 1
             c["ms"] += r.time_ms
+        if r.created_at and (c.get("last") is None or r.created_at > c["last"]):
+            c["last"] = r.created_at
     cats = [{"name": k, "done": v["done"],
              "accuracy": round(v["correct"] / v["judged"] * 100) if v["judged"] else None,
-             "avg_sec": round(v["ms"] / v["timed"] / 1000) if v["timed"] else None}
+             "avg_sec": round(v["ms"] / v["timed"] / 1000) if v["timed"] else None,
+             "last_days": (today - v["last"].date()).days if v.get("last") else None}
             for k, v in by_cat.items()]
+    # 正确率趋势(近14天,只取有做题的天)
+    acc_trend = []
+    for i in range(13, -1, -1):
+        d = today - timedelta(days=i)
+        dj = [r for r in recs if r.created_at and r.created_at.date() == d
+              and r.is_correct in (0, 1)]
+        if dj:
+            acc_trend.append({"date": d.strftime("%m-%d"), "n": len(dj),
+                              "acc": round(sum(1 for r in dj if r.is_correct == 1)
+                                           * 100 / len(dj))})
+    # 错因分布(error_tag 由"为什么错"讲解时打上)
+    etags = {}
+    for r in recs:
+        if r.error_tag:
+            etags[r.error_tag] = etags.get(r.error_tag, 0) + 1
+    error_tags = [{"tag": k, "count": v}
+                  for k, v in sorted(etags.items(), key=lambda x: -x[1])]
     try:
         days_left = (datetime.strptime(config.EXAM_DATE, "%Y-%m-%d").date() - today).days
     except Exception:
@@ -1519,6 +1626,7 @@ def stats(u: User = Depends(auth.current_user)):
             "favorite": fav, "streak": _streak(day_set),
             "today_count": today_count, "active_days": len(day_set),
             "trend": trend, "by_category": cats,
+            "acc_trend": acc_trend, "error_tags": error_tags,
             "exam_name": config.EXAM_NAME, "exam_days_left": days_left,
             "daily_goal": config.DAILY_GOAL, "rank": _rank_of(len(recs)),
             "online": opstats.online_count()}

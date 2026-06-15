@@ -448,6 +448,39 @@ def explain(content: str, answer: str, material: str = "") -> str:
         return ""
 
 
+ERROR_TAGS = ("概念不清", "审题失误", "计算错误", "时间不够", "蒙错")
+
+
+def explain_wrong(content: str, correct: str, user_answer: str, topic: str) -> dict:
+    """讲错题:针对用户的错误作答讲(为什么错 + 考点),并顺手判一个错因标签。
+    一次调用同时拿到讲解 + error_tag(不拆多次请求,省 token)。
+    返回 {explanation, error_tag}。同类提醒(历史错误次数)由调用方本地拼。"""
+    prompt = f"""你是行测讲题助手,像懂他的学长。基于以下信息讲解这道错题:
+[题目]:{content[:2200]}
+[正确答案]:{correct}
+[用户作答]:{user_answer}
+[考点]:{topic}
+输出要求(简洁、口语、≤220字):
+1. 为什么错:针对"他选了 {user_answer}"做具体分析,点出他错在哪一步(不要泛泛讲答案)
+2. 考点归属:一句话点明知识点与正确思路
+最后**另起一行只输出**这个 JSON(用于打错因标签,不要多余文字):
+{{"error_tag":"概念不清|审题失误|计算错误|时间不够|蒙错"}}"""
+    try:
+        raw = _invoke(prompt, scene="AI讲题").strip()
+    except Exception:
+        return {"explanation": "", "error_tag": ""}
+    tag, text = "", raw
+    m = re.search(r'\{[^{}]*error_tag[^{}]*\}', raw)
+    if m:
+        try:
+            tag = (json.loads(m.group(0)).get("error_tag") or "").strip()
+        except Exception:
+            tag = ""
+        text = raw[:m.start()].strip()
+    text = text.replace("```json", "").replace("```", "").strip()
+    return {"explanation": text[:1500], "error_tag": tag if tag in ERROR_TAGS else ""}
+
+
 def update_memory(profile: str, recent_text: str) -> str:
     """把最近对话里关于学生的【长期有用】信息合并进学习档案(Markdown)。
     只记稳定事实(考试经历/薄弱擅长/目标习惯/偏好),删过时的,不记一次性闲聊。"""
@@ -499,9 +532,10 @@ def _last_topic(history):
     return None
 
 
-def chat_reco(message: str, history=None, profile: str = "") -> dict:
+def chat_reco(message: str, history=None, profile: str = "", learning: str = "") -> dict:
     """上下文感知:一次 LLM 调用读完整对话 → 出辅导回复 + 判断是否该给题、给哪种题型。
-    profile=该用户的"学习档案"(类 Claude memory),用于个性化与新用户引导。
+    profile=该用户"学习档案"(类 Claude memory,定性、慢更新);
+    learning=该用户"实时学情"(正确率/各模块进度/错题分布,做题数据、每次现算)。
     返回 {reply, want, l1, l2, summary}。"""
     persona = (
         f"【你已了解的学生情况】\n{profile.strip()}\n请结合这些因材施教(不必每次提起)。\n"
@@ -509,6 +543,9 @@ def chat_reco(message: str, history=None, profile: str = "") -> dict:
         "【这是新学生,你还不了解TA】可在回复里自然、友好地问一两句以便因材施教"
         "(如:之前考过公务员/事业编吗?成绩如何?觉得哪部分最没把握?),"
         "学生不愿答就别追问、正常帮TA答疑/练题。\n")
+    if learning.strip():
+        persona += (f"【该学生实时学情(做题数据)】\n{learning.strip()}\n"
+                    "回应时可据此给针对性建议:正确率低/错题多的模块多提醒、多推该类题。\n")
     # JSON 指令放最后(最强位置),保证模型稳定吐 JSON
     system = (
         "你是专业的行测辅导老师,在和学生【连续多轮对话】。先读懂完整对话历史与意图。\n"

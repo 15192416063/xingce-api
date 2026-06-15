@@ -119,6 +119,19 @@ class PracticeRecord(Base):
     user_answer: Mapped[str] = mapped_column(String(64), default="")
     is_correct: Mapped[int] = mapped_column(Integer, default=0)
     time_ms: Mapped[int] = mapped_column(Integer, default=0)   # 本题用时(毫秒,0=未记)
+    error_tag: Mapped[str] = mapped_column(String(16), default="")  # 错因:概念不清/审题失误/计算错误/时间不够/蒙错
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class WrongExplain(Base):
+    """错题讲解缓存:按(题, 用户所选错项)缓存 AI 三层讲解,同样的错法全员复用,省 token。
+    同类提醒(历史错误次数)按用户本地拼接,不进缓存。"""
+    __tablename__ = "wrong_explain"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    qid: Mapped[int] = mapped_column(Integer, index=True)
+    user_answer: Mapped[str] = mapped_column(String(8), default="")
+    content: Mapped[str] = mapped_column(Text, default="")
+    error_tag: Mapped[str] = mapped_column(String(16), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
