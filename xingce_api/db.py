@@ -353,6 +353,18 @@ class News(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class QuestionChat(Base):
+    """针对某道题的"追问线程":每用户每题一条独立会话,可多轮追问、可回看历史。
+    role: user/assistant。AI 答疑时始终带着这道题的题干/答案/解析作上下文。"""
+    __tablename__ = "question_chat"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    question_id: Mapped[int] = mapped_column(Integer, index=True)
+    role: Mapped[str] = mapped_column(String(16), default="user")  # user / assistant
+    content: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 def _migrate():
     """轻量自动迁移(SQLite):给已存在的表补上模型新增的列,避免旧库缺列报错。
     生产用 MySQL 时请改用正式迁移工具(Alembic)。"""

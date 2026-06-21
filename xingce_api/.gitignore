@@ -28,3 +28,8 @@ _srv.log
 # 穿透工具二进制
 cloudflared.exe
 *.exe
+
+# 数据制品 / 备份(种子包走 Release;库备份不进 git)
+public_seed_*.zip
+seed_export/
+_backup_*/

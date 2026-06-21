@@ -46,6 +46,8 @@ _NOISE_TEXT = [
     re.compile(r'(中公|华图|粉笔|步知|导氮|腰果|金标尺|宏鹏|京佳)'),
     re.compile(r'[A-Za-z0-9_.-]+\.(com|cn|net|org|cc)\b'),     # 网址水印
     re.compile(r'(扫码|长按|关注)[^\n]{0,10}(领取|资料|公众号|二维码)'),
+    re.compile(r'(展鸿|ZHANHONG)', re.I),                       # 展鸿教育 logo/水印
+    re.compile(r'让(学习|考试)更'),                              # "让学习更快乐/让考试更简单"
 ]
 
 
@@ -80,11 +82,16 @@ def _noise_line_rects(page, noise_set=None):
             txt = "".join(s["text"] for s in ln.get("spans", [])).strip()
             if not txt:
                 continue
+            # 明确的页码/机构水印文字特征(第X页/共Y页/展鸿/让学习更/网址…)→ 不论在页面
+            # 哪个位置都涂白:这些绝不会是行测正文,放在正文带里也照清(汇编版页码常飘进图)
+            if any(p.search(txt) for p in _NOISE_TEXT):
+                out.append(fitz.Rect(ln["bbox"]))
+                continue
             cy = (ln["bbox"][1] + ln["bbox"][3]) / 2
-            if hi < cy < lo:                 # 只清页眉/页脚带,正文区的水印交给漂白
+            if hi < cy < lo:                 # 跨页重复模板仅在页眉/页脚带清,避免误伤正文
                 continue
             norm = re.sub(r'\d+', '#', txt)
-            if (noise_set and norm in noise_set) or any(p.search(txt) for p in _NOISE_TEXT):
+            if noise_set and norm in noise_set:
                 out.append(fitz.Rect(ln["bbox"]))
     return out
 

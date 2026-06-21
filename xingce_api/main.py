@@ -7,12 +7,13 @@ import re
 import json
 import uuid
 import random
+import functools
 from datetime import date, datetime, timedelta
 
 from fastapi import (FastAPI, UploadFile, File, BackgroundTasks, HTTPException,
                      Form, Depends, Body, Request)
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import Response, JSONResponse
+from fastapi.responses import Response, JSONResponse, HTMLResponse, PlainTextResponse
 
 from sqlalchemy import func
 
@@ -29,7 +30,7 @@ from db import (init_db, SessionLocal, IngestionJob, Question, QuestionImage,
                 PracticeRecord, WrongBook, MaterialGroup, Favorite, User, News,
                 AiUsage, StatDaily, VisitDay, LoginLog, Setting, AuditLog, AiChannel,
                 Paper, InviteCode, ExamInfo, MockExam, TokenStat, ChatLog, Feedback,
-                UserMemory, WrongExplain)
+                UserMemory, WrongExplain, QuestionChat)
 import exams
 
 # ---- 错误日志:轮转文件,排障不靠猜(稳定性) ----
@@ -47,6 +48,9 @@ _logger.addHandler(_h)
 
 app = FastAPI(title="行测智能题库 API", version="2.2",
               docs_url=None, redoc_url=None, openapi_url=None)  # 生产关掉接口文档
+# gzip 压缩 HTML/JS/JSON(首屏 ~124KB→~30KB,加速首屏 + 改善体验信号;SEO 诊断指出未压缩)
+from fastapi.middleware.gzip import GZipMiddleware  # noqa: E402
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 init_db()
 security.start_backup_thread()
 
@@ -197,7 +201,7 @@ def _ai_guard(u: User):
 
 def _user_vo(u: User):
     return {"id": u.id, "username": u.username, "nickname": u.nickname or u.username,
-            "role": u.role}
+            "role": u.role, "mine_upload": bool(config.MINE_UPLOAD_ENABLED)}
 
 
 # 错题间隔重复:做对一次升档,档位间隔 1/3/7/15 天,全过自动标掌握
@@ -516,6 +520,25 @@ def submit(question_id: int = Form(...), user_answer: str = Form(...),
             "explanation": exp, "answer_origin": origin}
 
 
+def _question_images(db, q):
+    """收集本题相关图片的绝对路径:资料分析材料组图表 + 本题自身图(图形题/选项图)。
+    供视觉模型读图解析用;文件不存在的跳过。"""
+    rels = []
+    if q.material_id:
+        mg = db.get(MaterialGroup, q.material_id)
+        if mg and mg.image_keys:
+            rels += [k for k in mg.image_keys.split("|") if k]
+    for img in db.query(QuestionImage).filter(QuestionImage.question_id == q.id).all():
+        if img.object_key:
+            rels.append(img.object_key)
+    out = []
+    for rel in rels:
+        p = os.path.join(config.IMAGE_DIR, rel)
+        if os.path.exists(p) and p not in out:
+            out.append(p)
+    return out
+
+
 @app.post("/api/practice/explain")
 def practice_explain(question_id: int = Form(...), user_answer: str = Form(""),
                      u: User = Depends(auth.current_user)):
@@ -523,13 +546,21 @@ def practice_explain(question_id: int = Form(...), user_answer: str = Form(""),
     顺手判错因标签。按(题,错项)缓存,同样错法全员复用,只在首次花一次 API。"""
     db = SessionLocal()
     q = db.get(Question, question_id)
-    if not q or not (q.answer or "").strip():
+    if not q:
+        db.close()
+        raise HTTPException(404, "题目不存在(可能是题库更新前的旧缓存,请刷新页面或开启新对话)")
+    if not (q.answer or "").strip():
         db.close()
         raise HTTPException(400, "本题暂无标准答案,无法讲解")
     ua = (user_answer or "").strip().upper()[:8]
     correct = q.answer.strip().upper()
     topic = f"{q.category_l1}/{q.category_l2}" if q.category_l2 else (q.category_l1 or "行测")
-    content, l2, qid = q.content, q.category_l2, q.id
+    content, l1, l2, qid = q.content, q.category_l1, q.category_l2, q.id
+    material = ""           # 资料分析:把共享材料数据带给 AI,才能定位数据、列式计算
+    if q.material_id:
+        mg = db.get(MaterialGroup, q.material_id)
+        material = mg.material_text if mg else ""
+    images = _question_images(db, q)   # 图表/图形题:带图给视觉模型读图
     # 同考点历史错误次数(本用户、同二级题型、答错)——含本次,显示时减 1
     hist = ((db.query(PracticeRecord)
              .join(Question, Question.id == PracticeRecord.question_id)
@@ -541,7 +572,7 @@ def practice_explain(question_id: int = Form(...), user_answer: str = Form(""),
     db.close()
     if not cached:
         _ai_guard(u)
-        r = ai.explain_wrong(content, correct, ua, topic)
+        r = ai.explain_wrong(content, correct, ua, topic, l1, l2, material, images)
         text, tag = r["explanation"], r["error_tag"]
         if not text:
             raise HTTPException(422, "讲解生成失败,请重试")
@@ -587,12 +618,13 @@ def ai_answer(qid: int, u: User = Depends(auth.current_user)):
     if q.material_id:
         mg = db.get(MaterialGroup, q.material_id)
         material = mg.material_text if mg else ""
-    content, mid = q.content, q.id
+    content, mid, ql1, ql2 = q.content, q.id, q.category_l1, q.category_l2
+    images = _question_images(db, q)   # 图表/图形题:带图给视觉模型读图
     db.close()
     _ai_guard(u)
     if ans:
-        # 2) 有正确答案 → 只让 AI 写解析(不猜答案,解析必对着正确答案)
-        exp = ai.explain(content, ans, material)
+        # 2) 有正确答案 → 只让 AI 按方法论写解析(不猜答案,解析必对着正确答案)
+        exp = ai.explain(content, ans, material, ql1, ql2, images)
         if not exp:
             raise HTTPException(422, "解析生成失败,请稍后重试")
         db = SessionLocal()
@@ -603,7 +635,7 @@ def ai_answer(qid: int, u: User = Depends(auth.current_user)):
         db.close()
         return {"answer": ans, "explanation": exp, "origin": origin, "cached": False}
     # 3) 没有答案 → AI 解题(猜)
-    r = ai.solve(content, material)
+    r = ai.solve(content, material, ql1, ql2, images)
     if not r["answer"]:
         raise HTTPException(422, "AI 无法确定本题答案(图形题/信息不足),建议上传官方答案")
     db = SessionLocal()
@@ -622,6 +654,57 @@ def ai_answer(qid: int, u: User = Depends(auth.current_user)):
     exp = q.explanation
     db.close()
     return {"answer": r["answer"], "explanation": exp, "origin": "ai", "cached": False}
+
+
+@app.get("/api/questions/{qid}/thread")
+def question_thread(qid: int, u: User = Depends(auth.current_user)):
+    """取该用户对这道题的追问历史(下次可回看)。"""
+    db = SessionLocal()
+    rows = (db.query(QuestionChat)
+            .filter(QuestionChat.user_id == u.id, QuestionChat.question_id == qid)
+            .order_by(QuestionChat.id).all())
+    items = [{"role": r.role, "content": r.content} for r in rows]
+    db.close()
+    return {"items": items}
+
+
+@app.post("/api/questions/{qid}/ask")
+def question_ask(qid: int, payload: dict = Body(...),
+                 u: User = Depends(auth.current_user)):
+    """针对某道题追问:AI 始终带着这道题的题干/答案/解析作上下文(带图的题走视觉模型),
+    问答都存进 question_chat,形成可回看的"该题专属对话分支"。"""
+    msg = (payload.get("message") or "").strip()[:1500]
+    if not msg:
+        raise HTTPException(400, "请输入问题")
+    db = SessionLocal()
+    q = db.get(Question, qid)
+    if not q or q.status != 1 or \
+            (q.scope != "public" and q.scope != f"user:{u.id}"):
+        db.close()
+        raise HTTPException(404, "题目不存在")
+    material = ""
+    if q.material_id:
+        mg = db.get(MaterialGroup, q.material_id)
+        material = mg.material_text if mg else ""
+    images = _question_images(db, q)
+    content, answer, expl = q.content, q.answer, q.explanation
+    ql1, ql2 = q.category_l1, q.category_l2
+    history = [{"role": r.role, "content": r.content} for r in
+               db.query(QuestionChat)
+               .filter(QuestionChat.user_id == u.id, QuestionChat.question_id == qid)
+               .order_by(QuestionChat.id).all()]
+    db.close()
+    _ai_guard(u)
+    reply = ai.ask_about_question(content, answer, expl, material, images,
+                                  history, msg, ql1, ql2)
+    if not reply:
+        raise HTTPException(422, "回答生成失败,请重试")
+    db = SessionLocal()
+    db.add(QuestionChat(user_id=u.id, question_id=qid, role="user", content=msg))
+    db.add(QuestionChat(user_id=u.id, question_id=qid, role="assistant", content=reply))
+    db.commit()
+    db.close()
+    return {"reply": reply}
 
 
 @app.get("/api/practice/similar/{question_id}")
@@ -960,10 +1043,23 @@ def ai_ask(payload: dict = Body(...), background: BackgroundTasks = None,
     推荐优先调用户自己上传的题(私有题库),不够再从公共库补。
     个性化:注入该用户学习档案(类 Claude memory),并定期(节流)后台更新档案。"""
     msg = (payload.get("message") or "").strip()[:4000]
-    if not msg:
-        raise HTTPException(400, "请输入内容")
+    img = (payload.get("image") or "").strip()
+    if img and not img.startswith("data:image"):
+        img = ""
+    if not msg and not img:
+        raise HTTPException(400, "请输入内容或上传图片")
+    if img and len(img) > 8_000_000:
+        raise HTTPException(413, "图片太大,请压缩后再传")
     _ai_guard(u)
     opstats.record_chat()
+    # 传了图片 → 视觉模型读图作答(单独一条,不走推荐题逻辑)
+    if img:
+        try:
+            reply = ai.chat_vision(msg, img)
+        except Exception as e:
+            reply = f"(看图失败,请确认已配置视觉模型后重试:{e})"
+        chat_id = opstats.log_chat(u.id, msg or "[图片]", reply, category="读图", is_paste=0)
+        return {"reply": reply, "analysis": {}, "items": [], "chat_id": chat_id}
     history = payload.get("history") or []
     profile = _user_memory(u.id)
     learning = _learning_snapshot(u.id)
@@ -1076,6 +1172,8 @@ async def mine_upload_pdf(background: BackgroundTasks, file: UploadFile = File(.
                           u: User = Depends(auth.current_user)):
     """用户上传整份 PDF → AI 切题/分类/抠图 → 全部进个人私有题库。
     之后在 AI 对话里问某类题,系统会优先从这里调取。"""
+    if not config.MINE_UPLOAD_ENABLED:
+        raise HTTPException(403, "用户自助上传已暂时关闭,题库由平台统一维护")
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "仅支持 PDF 文件")
     db = SessionLocal()
@@ -2125,7 +2223,54 @@ def health():
     return {"ok": True, "secret_default": config.SECRET_IS_DEFAULT}
 
 
-# 前端页面(SPA)
+# ============ SEO:首页直出(含完整 head 标签)/ robots / sitemap ============
+def _site_url(request: Request) -> str:
+    """对外绝对地址:优先 .env 的 XC_SITE_URL(绑域名后设),否则按访问者请求 host 推断。"""
+    if config.SITE_URL:
+        return config.SITE_URL
+    return str(request.base_url).rstrip("/")
+
+
+@functools.lru_cache(maxsize=1)
+def _index_html() -> str:
+    with open(os.path.join(config.BASE_DIR, "static", "index.html"),
+              encoding="utf-8") as f:
+        return f.read()
+
+
+@app.get("/", response_class=HTMLResponse)
+def home(request: Request):
+    """首页:把 index.html 直出,并把 {{SITE_URL}} 占位符替换成真实绝对地址
+    (canonical / Open Graph 需要绝对链接)。落地页文案是静态 HTML,爬虫可直接读到。"""
+    html = _index_html().replace("{{SITE_URL}}", _site_url(request))
+    return HTMLResponse(html)
+
+
+@app.get("/robots.txt", response_class=PlainTextResponse)
+def robots_txt(request: Request):
+    base = _site_url(request)
+    return ("User-agent: *\n"
+            "Allow: /\n"
+            "Disallow: /api/\n"
+            "Disallow: /img/\n"
+            f"Sitemap: {base}/sitemap.xml\n")
+
+
+@app.get("/sitemap.xml")
+def sitemap_xml(request: Request):
+    base = _site_url(request)
+    # 目前仅首页一个可收录页;后续上线专项/真题/教程页时,在此追加 <url> 即可。
+    urls = [(f"{base}/", "daily", "1.0")]
+    items = "".join(
+        f"<url><loc>{u}</loc><changefreq>{c}</changefreq>"
+        f"<priority>{p}</priority></url>" for u, c, p in urls)
+    xml = ('<?xml version="1.0" encoding="UTF-8"?>'
+           '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+           f'{items}</urlset>')
+    return Response(content=xml, media_type="application/xml")
+
+
+# 前端页面(SPA)。注意:上面的 "/" 路由先匹配,这里负责其余静态资源(图片/og-image 等)
 if os.path.isdir(os.path.join(config.BASE_DIR, "static")):
     app.mount("/", StaticFiles(directory=os.path.join(config.BASE_DIR, "static"),
                                html=True), name="static")

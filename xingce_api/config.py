@@ -29,6 +29,8 @@ if DB_URL.startswith("sqlite:///") and not os.path.isabs(DB_URL[10:]):
 PDF_DIR = os.path.join(BASE_DIR, "data", "pdf")        # 原始PDF
 IMAGE_DIR = os.path.join(BASE_DIR, "data", "images")   # 抠出的图
 VECTOR_DIR = os.path.join(BASE_DIR, "vector_db")       # Chroma 向量库
+# 行测解析方法论框架(system prompt + 题型/图推/资料分析知识库),解析生成时注入
+KB_DIR = os.getenv("XC_KB_DIR", os.path.join(os.path.dirname(BASE_DIR), "行测解析框架"))
 
 # ---- AI ----
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
@@ -42,8 +44,18 @@ EMBED_BASE_URL = os.getenv("XC_EMBED_BASE_URL", "https://api.siliconflow.cn/v1")
 EMBED_KEY = os.getenv("XC_EMBED_KEY", "")
 EMBED_MODEL = os.getenv("XC_EMBED_MODEL", "BAAI/bge-large-zh-v1.5")
 
+# ---- 视觉模型(资料分析图表/图形题"读图"解析)----
+# 默认复用硅基流动账号(同一把 key 可调其视觉模型);也可在管理面板加"支持看图"渠道。
+# 未配置则自动回退到纯文字解析(只讲公式思路、不编数字)。
+VISION_BASE_URL = os.getenv("XC_VISION_BASE_URL", EMBED_BASE_URL)
+VISION_KEY = os.getenv("XC_VISION_KEY", EMBED_KEY)
+VISION_MODEL = os.getenv("XC_VISION_MODEL", "Qwen/Qwen3-VL-8B-Instruct")
+
 # ---- 业务 ----
 CATEGORIES_L1 = ["言语理解", "数量关系", "判断推理", "资料分析", "常识判断", "政治理论"]
+# 站点对外访问地址(用于 SEO 的 canonical / Open Graph 绝对链接)。
+# 绑定域名后设 XC_SITE_URL=https://你的域名;不设则按访问者请求的 host 自动推断。
+SITE_URL = os.getenv("XC_SITE_URL", "").rstrip("/")
 # 考试倒计时(可改成你的目标考试)
 EXAM_NAME = os.getenv("XC_EXAM_NAME", "2027国家公务员考试")
 EXAM_DATE = os.getenv("XC_EXAM_DATE", "2026-11-29")  # YYYY-MM-DD
@@ -82,6 +94,8 @@ BACKUP_KEEP = int(os.getenv("XC_BACKUP_KEEP", "7"))
 # ---- 免费系统 · 成本控制 ----
 # 每人每日 AI 调用硬上限(防滥用/焊死成本,管理员不限)
 AI_DAILY_CAP = int(os.getenv("XC_AI_DAILY_CAP", "30"))
+# 是否允许用户自行上传 PDF 进私有题库(默认关闭:题库由管理员统一掌控)
+MINE_UPLOAD_ENABLED = os.getenv("XC_MINE_UPLOAD", "false").lower() == "true"
 # 私有题库容量:以套卷为单位,每人 30 套
 MINE_PAPER_CAP = int(os.getenv("XC_MINE_PAPER_CAP", "30"))
 # (旧)题数上限,仍作兜底防单卷超大灌库

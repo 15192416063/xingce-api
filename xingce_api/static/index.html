@@ -3,7 +3,30 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>行测智能题库 · 上岸自习室</title>
+<title>行测题库_行测真题刷题·限时模考·错题本_上岸自习室</title>
+<meta name="description" content="上岸自习室·行测智能题库:上传行测真题PDF,AI自动切题、识别题型考点、生成私人题库;支持对话刷题、整卷限时模考、错题本自动复习。国考省考行测备考,注册即用。">
+<meta name="keywords" content="行测题库,行测真题,行测刷题,公务员考试刷题,公考刷题,AI刷题,国考行测,省考行测,行测错题本,行测限时模考,行测题型考点,行测真题PDF切题,上岸自习室">
+<meta name="robots" content="index,follow,max-image-preview:large">
+<meta name="theme-color" content="#2e5a3f">
+<link rel="canonical" href="{{SITE_URL}}/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="上岸自习室">
+<meta property="og:title" content="行测题库 · 上岸自习室">
+<meta property="og:description" content="上传行测真题PDF,AI自动切题成卷;对话刷题+整卷限时模考+错题本自动复习,国考省考行测备考。">
+<meta property="og:url" content="{{SITE_URL}}/">
+<meta property="og:image" content="{{SITE_URL}}/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="行测题库 · 上岸自习室">
+<meta name="twitter:description" content="上传行测真题PDF,AI自动切题成卷;对话刷题+限时模考+错题本自动复习,国考省考行测备考。">
+<meta name="twitter:image" content="{{SITE_URL}}/og-image.png">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebApplication","name":"上岸自习室·行测智能题库","url":"{{SITE_URL}}/","applicationCategory":"EducationApplication","operatingSystem":"Web","inLanguage":"zh-CN","description":"上传行测真题PDF,AI自动切题入库,对话刷题、整卷限时模考、错题本自动复习,国考省考行测备考。"}
+</script>
+<!-- Markdown 渲染 + LaTeX 公式(CDN;离线时自动降级为纯文本,不影响使用) -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
 <style>
 /* ============================================================
    设计语言:「自习室」
@@ -265,6 +288,13 @@ input:focus,select:focus{border-color:var(--green)}
 .srow>span:first-child{width:120px;font-size:13px;color:var(--ink)}
 .srow input{flex:1;min-width:180px;font-size:13px;padding:6px 9px;border:1.5px solid var(--line);border-radius:8px;font-family:inherit}
 .wexp{margin-top:8px;background:#fff;border-left:3px solid var(--green);border-radius:8px;padding:9px 11px;font-size:13px;line-height:1.75}
+.qthread{margin-top:8px;background:#fbfaf4;border:1px solid #ece9dc;border-radius:10px;padding:10px}
+.qthread .tlog{max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:8px}
+.qthread .tmsg{font-size:13px;line-height:1.75;padding:8px 11px;border-radius:9px;max-width:92%;word-wrap:break-word;overflow-wrap:anywhere}
+.qthread .tmsg.tme{align-self:flex-end;background:var(--green);color:#fff}
+.qthread .tmsg.tai{align-self:flex-start;background:#fff;border:1px solid #ece9dc}
+.qthread .tinput{display:flex;gap:6px;margin-top:8px}
+.qthread .tinput input{flex:1;border:1px solid #d9d6c8;border-radius:8px;padding:7px 10px;font-size:13px;outline:none;background:#fff}
 .nudge{background:linear-gradient(90deg,#fff7e6,#fdf0d8);border:1px solid #f0d9a8;border-radius:10px;padding:9px 12px;font-size:13px;color:#7a5c1e;cursor:pointer;margin:2px 0 12px;display:flex;justify-content:space-between;align-items:center;gap:8px}
 .nudge .go{color:var(--orange);font-weight:600;white-space:nowrap}
 .nudge:hover{filter:brightness(.985)}
@@ -377,24 +407,24 @@ input:focus,select:focus{border-color:var(--green)}
 <body>
 
 <!-- ============ 落地页(未登录) ============ -->
-<div class="landing" id="landing" style="display:none">
+<div class="landing" id="landing">
  <header class="lp-top" id="lptop">
    <div class="lp-brand"><span class="logo">岸</span> 行测智能题库</div>
    <div class="lp-actions">
      <span class="lnk" onclick="scrollToSec('feat')">功能</span>
      <span class="lnk" onclick="scrollToSec('flow')">怎么用</span>
      <button class="btn ghost" onclick="openAuth('login')">登录</button>
-     <button class="btn" onclick="openAuth('register')">免费注册</button>
+     <button class="btn" onclick="openAuth('register')">注册</button>
    </div>
  </header>
 
  <section class="hero-sec">
    <div class="hero-l">
-     <div class="rv"><span class="kicker"><span class="dot"></span>公务员考试 · 行测备考 · 永久免费</span></div>
+     <div class="rv"><span class="kicker"><span class="dot"></span>公务员考试 · 行测备考</span></div>
      <h1 class="rv d1">把每一套真题<br>刷成<em>上岸的底气</em></h1>
      <p class="sub rv d2">上传行测真题 PDF,AI 自动切题、分类、抠图,变成你的私人题库。想练什么直接说,整卷限时模考,错题自动安排复习——备考路上的脏活累活,都交给它。</p>
      <div class="hero-cta rv d3">
-       <button class="btn cta big" onclick="openAuth('register')">免费开始备考</button>
+       <button class="btn cta big" onclick="openAuth('register')">开始备考</button>
        <button class="btn big ghost" onclick="scrollToSec('flow')">看看怎么用</button>
      </div>
      <div class="hero-stats rv d4">
@@ -434,8 +464,8 @@ input:focus,select:focus{border-color:var(--green)}
 
  <section class="cta-sec rv">
    <h2>今天传一套真题,明天开始智能刷题</h2>
-   <p>所有功能永久免费 · 注册即用</p>
-   <button class="btn cta big" onclick="openAuth('register')">免费注册</button>
+   <p>所有功能开放 · 注册即用</p>
+   <button class="btn cta big" onclick="openAuth('register')">注册</button>
  </section>
  <div class="lp-foot">行测智能题库 · 祝你早日上岸</div>
 </div>
@@ -444,7 +474,7 @@ input:focus,select:focus{border-color:var(--green)}
 <div class="modal-mask" id="authmask" onclick="if(event.target===this)closeAuth()">
  <div class="auth-box">
    <button class="x" onclick="closeAuth()">×</button>
-   <h1 id="auth-title">欢迎回来</h1>
+   <h2 id="auth-title" style="font-size:26px;font-weight:800;margin:6px 0 2px">欢迎回来</h2>
    <p id="gate-sub">登录后继续刷题上岸</p>
    <input id="g-user" placeholder="用户名(≥3位)" autocomplete="username">
    <input id="g-pass" type="password" placeholder="密码(≥6位)" autocomplete="current-password">
@@ -551,7 +581,7 @@ function closeAuth(){$('#authmask').classList.remove('show');}
 let AUTH_CFG=null;
 async function syncAuthUI(){
  $('#auth-title').textContent=AUTH_MODE==='login'?'欢迎回来':'创建账号';
- $('#gate-sub').textContent=AUTH_MODE==='login'?'登录后继续刷题上岸':'注册新账号,免费开练';
+ $('#gate-sub').textContent=AUTH_MODE==='login'?'登录后继续刷题上岸':'注册新账号,开始刷题';
  $('#g-btn').textContent=AUTH_MODE==='login'?'登录':'注册';
  $('#g-code').style.display=AUTH_MODE==='register'?'block':'none';
  $('#g-sw').textContent=AUTH_MODE==='login'?'没有账号?去注册 →':'已有账号?去登录 →';
@@ -623,13 +653,13 @@ function trackVisit(){try{fetch('/api/track/visit',{method:'POST',headers:TOKEN?
 /* ---------- 题目解析:拆出题干 + 选项 ---------- */
 function parseQ(content){
  let s=esc(content||'').replace(/^\s*\d{1,3}[\.、．]\s*/,'').replace(/\s*\d{1,3}[\.、．]\s*(?=A[\.、．])/,' ');
- const m=s.match(/[ABCD][\.、．]/);
- if(!m)return{stem:s.trim(),options:[]};
- const idx=s.indexOf(m[0]);
- const stem=s.slice(0,idx).trim();
- const opts=[];const r=/([ABCD])[\.、．]\s*([\s\S]*?)(?=[ABCD][\.、．]|$)/g;let mm;
- while((mm=r.exec(s.slice(idx))))opts.push({k:mm[1],t:mm[2].trim()});
- return{stem,options:opts};
+ // 选项标记须在「行首」(切题时每个选项独占一行)。这样题干里「A、B、C 三个顶点」这种
+ // 顿号枚举(在句中、非行首)不会被误判成选项,从而把题干尾巴塞进选项。
+ const r=/(?:^|\n)[ \t　]*([ABCD])[\.、．][ \t　]*([\s\S]*?)(?=\n[ \t　]*[ABCD][\.、．]|$)/g;
+ const opts=[];let mm,first=-1;
+ while((mm=r.exec(s))){if(first<0)first=mm.index;opts.push({k:mm[1],t:mm[2].trim()});}
+ if(!opts.length)return{stem:s.trim(),options:[]};
+ return{stem:s.slice(0,first).trim(),options:opts};
 }
 /* ---------- 题卡 ---------- */
 function qCard(q,opts={}){
@@ -656,9 +686,45 @@ function qCard(q,opts={}){
    h+='</div>';
  }
  h+=`<div class="q-foot"><button class="btn sm ghost" onclick="findSim(${q.id})">${ic('search',14)} 找相似</button>`;
+ h+=`<button class="btn sm ghost" onclick="openThread(${q.id})">${ic('chat',14)} 追问这道题</button>`;
  if(opts.master)h+=`<button class="btn sm ok" onclick="masterQ(${q.id})">${ic('check',14)} 已掌握</button>`;
  if(opts.del)h+=`<button class="btn sm bad" onclick="mineDel(${q.id})">移出我的库</button>`;
- h+=`</div><div id="r${q.id}"></div></div>`;return h;
+ h+=`</div><div id="r${q.id}"></div><div class="qthread" id="thread${q.id}" style="display:none"></div></div>`;return h;
+}
+/* 每题独立追问线程:AI 始终带着这道题作上下文,历史存库可回看 */
+async function openThread(id){
+ const box=document.getElementById('thread'+id);if(!box)return;
+ if(box.style.display!=='none'){box.style.display='none';return;}
+ box.style.display='block';box.innerHTML='<div class="muted" style="font-size:12px;padding:4px">加载中…</div>';
+ let items=[];try{const r=await j('/api/questions/'+id+'/thread');items=r.items||[];}catch(e){}
+ renderThread(id,items);
+}
+function threadMsgHTML(m){
+ return `<div class="tmsg ${m.role==='user'?'tme':'tai'}">${m.role==='user'?esc(m.content):renderMD(m.content)}</div>`;
+}
+function renderThread(id,items){
+ const box=document.getElementById('thread'+id);if(!box)return;
+ let h='<div class="tlog" id="tlog'+id+'">';
+ h+=items.length?items.map(threadMsgHTML).join('')
+   :'<div class="muted" style="font-size:12px">还没问过这道题。直接问,比如「为什么选 B」「这一步怎么算的」「换种方法讲讲」</div>';
+ h+='</div>';
+ h+=`<div class="tinput"><input id="tin${id}" placeholder="追问这道题…" onkeydown="if(event.key==='Enter'){event.preventDefault();askThread(${id})}"><button class="btn sm" onclick="askThread(${id})">问</button></div>`;
+ box.innerHTML=h;
+ const log=document.getElementById('tlog'+id);if(log){typeset(log);log.scrollTop=log.scrollHeight;}
+}
+async function askThread(id){
+ const inp=document.getElementById('tin'+id);if(!inp)return;
+ const msg=inp.value.trim();if(!msg)return;inp.value='';
+ const log=document.getElementById('tlog'+id);
+ if(log){const em=log.querySelector('.muted');if(em)em.remove();
+  log.insertAdjacentHTML('beforeend',threadMsgHTML({role:'user',content:msg}));
+  log.insertAdjacentHTML('beforeend','<div class="tmsg tai" id="twait'+id+'"><span class="muted">思考中…</span></div>');
+  log.scrollTop=log.scrollHeight;}
+ let r;try{r=await j('/api/questions/'+id+'/ask',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({message:msg})});}
+ catch(e){const w=document.getElementById('twait'+id);if(w){w.removeAttribute('id');w.innerHTML='出错了:'+esc(''+e);}return;}
+ const w=document.getElementById('twait'+id);
+ if(w){w.removeAttribute('id');w.innerHTML=renderMD(r.reply||'');typeset(w);}
+ if(log)log.scrollTop=log.scrollHeight;
 }
 async function toggleFav(id,el){const fd=new FormData();fd.append('question_id',id);
  const r=await j('/api/favorite/toggle',{method:'POST',body:fd});
@@ -675,17 +741,18 @@ async function pickOpt(id,k,el){
  const aiTag=r.answer_origin==='ai'?' <span class="tag diff">AI 答案,仅供参考</span>':'';
  if(r.has_answer===false||r.correct===null){
    res.className='res info';res.innerHTML='已记录作答(本题答案暂未录入)。'
-    +(r.explanation?'<br>解析:'+esc(r.explanation):'')
-    +` <button class="btn sm ghost" onclick="aiSolve(${id},'${k}')">${ic('spark',14)} 让 AI 解答</button>`;return;}
+    +(r.explanation?'<br>解析:'+renderMD(r.explanation):'')
+    +` <button class="btn sm ghost" onclick="aiSolve(${id},'${k}')">${ic('spark',14)} 让 AI 解答</button>`;typeset(res);return;}
  [...box.children].forEach(c=>{const ck=c.querySelector('b').textContent;
    if(ck===(r.answer||'').toUpperCase())c.classList.add('correct');});
  if(r.correct){COMBO++;WRONG_COMBO=0;
-   res.className='res ok';res.innerHTML='回答正确!'+aiTag+(r.explanation?'<br>解析:'+esc(r.explanation):'');
+   res.className='res ok';res.innerHTML='回答正确!'+aiTag+(r.explanation?'<br>解析:'+renderMD(r.explanation):'');
    if(COMBO>=2)toast(`连对 ${COMBO} 题,保持住!`);}
  else{COMBO=0;WRONG_COMBO++;if(WRONG_COMBO>=3){toast('状态一般?换个简单模块找回节奏,别硬刚~');WRONG_COMBO=0;}
    el.classList.remove('sel');el.classList.add('wrong');
-   res.className='res bad';res.innerHTML=`回答错误,已加入错题本。`+aiTag+(r.explanation?'<br>解析:'+esc(r.explanation):'')
+   res.className='res bad';res.innerHTML=`回答错误,已加入错题本。`+aiTag+(r.explanation?'<br>解析:'+renderMD(r.explanation):'')
     +` <button class="btn sm ghost" onclick="explainWrong(${id},'${k}',this)">${ic('spark',14)} 为什么错?AI 讲解</button>`;}
+ typeset(res);
 }
 async function explainWrong(id,myAns,btn){const res=$('#r'+id);
  btn.disabled=true;const old=btn.innerHTML;btn.textContent='讲解中…';
@@ -694,8 +761,8 @@ async function explainWrong(id,myAns,btn){const res=$('#r'+id);
  catch(e){btn.disabled=false;btn.innerHTML=old;toast('讲解失败:'+e);return;}
  if(r.detail){toast(r.detail);btn.disabled=false;btn.innerHTML=old;return;}
  const tag=r.error_tag?`<span class="tag diff">错因·${esc(r.error_tag)}</span> `:'';
- res.insertAdjacentHTML('beforeend',`<div class="wexp">${tag}<div style="margin-top:6px;white-space:pre-wrap">${esc(r.explanation)}</div>${r.remind?'<div style="margin-top:6px;color:var(--orange);font-weight:600">'+esc(r.remind)+'</div>':''}</div>`);
- btn.remove();}
+ res.insertAdjacentHTML('beforeend',`<div class="wexp">${tag}<div class="mdbody" style="margin-top:6px">${renderMD(r.explanation)}</div>${r.remind?'<div style="margin-top:6px;color:var(--orange);font-weight:600">'+esc(r.remind)+'</div>':''}</div>`);
+ typeset(res);btn.remove();}
 async function aiSolve(id,myAns){const res=$('#r'+id);res.className='res info';
  const t0=Date.now();let timer=setInterval(()=>{const sec=Math.round((Date.now()-t0)/1000);
   res.innerHTML=`AI 解题中… ${sec}s <span class="muted">(首次约 3~10 秒,算出后会缓存,下次秒出且不再消耗 token)</span>`;},400);
@@ -709,7 +776,7 @@ async function aiSolve(id,myAns){const res=$('#r'+id);res.className='res info';
  res.className=hit?'res ok':'res info';
  res.innerHTML=`${hit?'与你的作答一致!':'AI 认为答案是 <b>'+r.answer+'</b>'}
   <span class="tag diff">AI 生成,仅供参考${r.cached?' · 已缓存':''}</span>`
-  +(r.explanation?'<br>解析:'+esc(r.explanation):'');}
+  +(r.explanation?'<br>解析:'+renderMD(r.explanation):'');typeset(res);}
 async function findSim(id){const box=$('#r'+id);box.className='res info';box.innerHTML='检索中…';
  const r=await j('/api/practice/similar/'+id);
  if(r.detail){box.innerHTML=r.detail;return;}
@@ -755,19 +822,39 @@ function chatPersist(){
  c.title=convoTitle(CHAT);c.ts=Date.now();
  CONVOS=CONVOS.filter(x=>x.id!==CUR);CONVOS.unshift(c);   // 最近用的置顶
  saveConvos();renderConvos();}
+/* AI 回复:Markdown 分点 + LaTeX 渲染。CDN 没加载到就降级为纯文本+换行,不报错。 */
+function renderMD(t){
+ if(!t)return '';
+ try{if(window.marked&&marked.parse)return marked.parse(String(t),{breaks:true,gfm:true});}catch(e){}
+ return esc(String(t)).replace(/\n/g,'<br>');
+}
+function typeset(el){
+ if(!el||!window.renderMathInElement)return;
+ try{renderMathInElement(el,{delimiters:[
+   {left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false},
+   {left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false}],
+   throwOnError:false});}catch(e){}
+}
+/* 推荐题出来后,把第一道题滚到顶部(而不是自动滑到最后一道),读者一眼看到第一题 */
+function scrollToFirstQ(ci){
+ const el=$(`[data-ci="${ci}"]`);if(!el)return;
+ setTimeout(()=>{try{el.scrollIntoView({behavior:'smooth',block:'start'});}catch(e){}},60);
+}
 function bubbleHTML(m,i){
  if(m.who==='cards')return `<div class="chatcards" data-ci="${i}">${m.html}</div>`;
  return `<div class="bub ${m.who}" data-ci="${i}">${m.html}</div>`;}
 function renderChat(){const log=$('#chatlog');if(!log)return;
  log.innerHTML=CHAT.map((m,i)=>bubbleHTML(m,i)).join('');
+ typeset(log);
  log.scrollTop=log.scrollHeight;
  const sl=$('#suglist');if(sl)sl.style.display=CHAT.length?'none':'';}
 function chatPush(who,html){CHAT.push({who,html});chatPersist();
  const log=$('#chatlog');if(log){log.insertAdjacentHTML('beforeend',bubbleHTML(CHAT[CHAT.length-1],CHAT.length-1));
+  typeset($(`[data-ci="${CHAT.length-1}"]`));
   log.scrollTop=log.scrollHeight;const sl=$('#suglist');if(sl)sl.style.display='none';}
  return CHAT.length-1;}
 function chatSet(i,html){if(!CHAT[i])return;CHAT[i].html=html;chatPersist();
- const el=$(`[data-ci="${i}"]`);if(el){el.innerHTML=html;const log=$('#chatlog');if(log)log.scrollTop=log.scrollHeight;}}
+ const el=$(`[data-ci="${i}"]`);if(el){el.innerHTML=html;typeset(el);const log=$('#chatlog');if(log)log.scrollTop=log.scrollHeight;}}
 function chatClear(){if(AI_BUSY){toast('正在生成,请稍候');return;}
  CHAT=[];AI_HIST=[];LAST_ITEMS=[];chatPersist();
  const a=$('#artifact');if(a)a.innerHTML='';renderChat();}
@@ -868,7 +955,7 @@ V.home=async()=>{let s={},papers={count:0,items:[]},mine={count:0,by_category:{}
   <div style="display:flex;gap:6px;flex-wrap:wrap">
    ${s.due_review?`<span class="chip" style="border-color:var(--bad);color:var(--bad)" onclick="WRONG_DUE=1;go('wrong')">今日待复习 ${s.due_review} 题 →</span>`:''}
    <span class="chip" onclick="startWeak()">弱项特训 →</span>
-   <span class="chip" onclick="$('#minepanel').scrollIntoView({behavior:'smooth'})">我的套卷 →</span></div>`;
+   <span class="chip" onclick="$('#minepanel').scrollIntoView({behavior:'smooth'})">真题套卷 →</span></div>`;
  const rankrow=rk.name?`<div class="ovrow"><span>当前段位</span><b>${rk.icon||''} ${rk.name}</b></div>
    ${rk.next?`<div class="ovrow"><span>距「${rk.next}」</span><b>还差 ${rk.need} 题</b></div>`:''}`:'';
  const ov=`${rankrow}
@@ -902,8 +989,9 @@ V.home=async()=>{let s={},papers={count:0,items:[]},mine={count:0,by_category:{}
        <span class="chatact" onclick="newConvo()">＋ 新对话</span>
        <span class="chatact muted" onclick="chatClear()">清空</span></span></div>
      <div class="chatlog" id="chatlog"></div>
-     <div class="chatbox"><textarea id="chatin" placeholder="想练什么直接说,比如「来5道图形推理」;或贴一道题让我分析考点…(Enter 发送)"></textarea>
-      <div style="display:flex;flex-direction:column;gap:6px"><button class="btn cta" onclick="aiSend()">发送</button><button class="btn gray sm" onclick="aiSaveMine()">存我的库</button></div></div>
+     <div class="chatbox"><textarea id="chatin" placeholder="想练什么直接说,比如「来5道图形推理」;或贴一道题让我分析考点;也可上传/粘贴题目图片…(Enter 发送)"></textarea>
+      <div style="display:flex;flex-direction:column;gap:6px"><button class="btn cta" onclick="aiSend()">发送</button><label class="btn gray sm" style="cursor:pointer;text-align:center">📷 传图<input type="file" accept="image/*" style="display:none" onchange="attachImg(this.files[0]);this.value=''"></label><button class="btn gray sm" onclick="aiSaveMine()">存我的库</button></div></div>
+     <div id="imgprev" style="display:none;margin-top:6px"></div>
      <div class="ana" id="suglist" style="margin-top:12px">${sug.map(t=>`<span class="chip" onclick="suggest('${t}')">${t}</span>`).join('')}</div>
      <div id="convowrap" class="convowrap"><div class="convohd">历史对话</div><div id="convopanel" class="convopanel"></div></div>
    </div>
@@ -916,32 +1004,24 @@ V.home=async()=>{let s={},papers={count:0,items:[]},mine={count:0,by_category:{}
  </div>`;};
 /* 进入首页后:把持久化的对话与题目集重新渲染出来(切模块/刷新都不丢) */
 function restoreHome(){renderChat();renderConvos();if(LAST_ITEMS.length)renderArtifact(LAST_ITEMS);}
-/* 我的题库面板:以「套卷」为单位(一份 PDF = 一套卷) */
+/* 真题套卷面板:以「套卷」为单位(一份真题 = 一套卷),点开即可刷题 / 限时模考 */
 function minePanel(papers,mine,s){
- const items=(papers.items||[]).slice().sort((a,b)=>(b.mine?1:0)-(a.mine?1:0)||b.id-a.id);
- const mineN=papers.mine_count||0,cap=papers.paper_cap||30;
- const pct=Math.min(100,Math.round(mineN/cap*100));
+ const items=(papers.items||[]).slice().sort((a,b)=>b.id-a.id);
  let h=`<div style="display:flex;justify-content:space-between;align-items:center">
-   <b style="font-size:14px">我的题库</b>
-   <label class="btn sm" style="cursor:pointer">${ic('up',14)} 传 PDF<input type="file" accept=".pdf" style="display:none" onchange="mineUploadPDF(this)"></label></div>`;
- h+=`<div style="margin-top:8px;font-size:13px">我的套卷 <b style="font-size:18px;color:var(--green);font-family:var(--serif)">${mineN}</b> <span class="muted">/ ${cap} 套 · 公共卷不占额度</span></div>`;
- h+=`<div class="cap"><i style="width:${pct}%"></i></div>`;
- const cats=Object.entries(mine.by_category||{}).sort((a,b)=>b[1]-a[1]);
- if(cats.length)h+=`<div style="margin:8px 0 4px">${cats.slice(0,6).map(([k,n])=>`<span class="chip" onclick="suggest('来几道${k}题')">${k} ${n}</span>`).join('')}</div>`;
- h+=`<div id="upjob" class="upjob"></div>`;
+   <b style="font-size:14px">真题套卷</b>
+   <span class="muted" style="font-size:12px">点开即可刷题 · 限时模考</span></div>`;
  if(!items.length){
-  h+=`<div class="mine-empty">题库还是空的<br><b>上传一份真题 PDF</b>,AI 自动切题<br>一份 PDF 就是一套卷,点开即可刷题、模考</div>`;
+  h+=`<div class="mine-empty">公共题库已为你备好真题<br>去<b>题型刷题</b>,或在助教里说「来几道题」即可开练</div>`;
  }else{
-  h+=`<div style="margin-top:6px">`;
+  h+=`<div style="margin-top:8px">`;
   for(const p of items.slice(0,12)){
    const pc=p.question_count?Math.round(p.done/p.question_count*100):0;
-   h+=`<div class="pp ${p.mine?'mine':''}" onclick="openPaper(${p.id})">
+   h+=`<div class="pp" onclick="openPaper(${p.id})">
     <div class="pico">${ic('doc',16)}</div>
     <div style="flex:1;min-width:0">
      <div class="pt">${esc(p.title)}</div>
      <div class="pm"><span>${p.question_count} 题</span>
       <span class="badge ${p.answer_count?'ok':'no'}">${p.answer_count?'答案 '+p.answer_count:'无答案'}</span>
-      ${p.mine?'<span class="badge my">我的</span>':''}
       <span>已做 ${p.done}/${p.question_count}</span></div>
      <div class="cap" style="margin:6px 0 0"><i style="width:${pc}%;background:${pc>=100?'var(--ok)':'var(--green)'}"></i></div>
     </div></div>`;}
@@ -994,21 +1074,48 @@ async function exportPDF(){if(!LAST_ITEMS.length){toast('没有可下载的题')
 function cardsHTML(items,tip){
  return `<div class="muted" style="margin:2px 0 6px;font-size:13px">${tip}</div>`
   +items.map(q=>qCard(q,{answer:true})).join('');}
+/* 对话框传图:上传/粘贴图片 → 缩放 → 暂存,发送时一并交给视觉模型看图作答 */
+let PENDING_IMG=null;
+function attachImg(file){
+ if(!file||!/^image\//.test(file.type||'')){toast('请选择图片');return;}
+ const r=new FileReader();
+ r.onload=()=>downscaleImg(r.result,1280,du=>{PENDING_IMG=du;showImgPrev(du);});
+ r.readAsDataURL(file);
+}
+function downscaleImg(dataUrl,maxW,cb){
+ const im=new Image();
+ im.onload=()=>{let w=im.width,h=im.height;if(w>maxW){h=Math.round(h*maxW/w);w=maxW;}
+  const c=document.createElement('canvas');c.width=w;c.height=h;
+  c.getContext('2d').drawImage(im,0,0,w,h);
+  try{cb(c.toDataURL('image/jpeg',0.85));}catch(e){cb(dataUrl);}};
+ im.onerror=()=>cb(dataUrl);im.src=dataUrl;
+}
+function showImgPrev(du){const el=$('#imgprev');if(!el)return;el.style.display='block';
+ el.innerHTML=`<span style="position:relative;display:inline-block;vertical-align:middle"><img src="${du}" style="max-height:84px;border-radius:8px;border:1px solid var(--line)"><span onclick="clearImg()" title="移除" style="position:absolute;top:-7px;right:-7px;background:#333;color:#fff;border-radius:50%;width:20px;height:20px;line-height:20px;text-align:center;cursor:pointer;font-size:13px">×</span></span> <span class="muted" style="font-size:12px;vertical-align:middle">图片已附上,发送即让 AI 看图作答</span>`;
+}
+function clearImg(){PENDING_IMG=null;const el=$('#imgprev');if(el){el.style.display='none';el.innerHTML='';}}
+function onPasteImg(e){const items=(e.clipboardData||{}).items||[];
+ for(const it of items){if(it.type&&it.type.indexOf('image')===0){const f=it.getAsFile();if(f){attachImg(f);e.preventDefault();return;}}}
+}
 async function aiSend(forced){const inp=$('#chatin');const msg=(forced||(inp?inp.value:'')||'').trim();
- if(!msg){return;}
+ const img=PENDING_IMG;
+ if(!msg&&!img){return;}
  if(AI_BUSY){toast('AI 正在回答上一条,请稍候');return;}
  if(inp)inp.value='';
  AI_BUSY=true;
- chatPush('me',esc(msg));AI_HIST.push({role:'user',content:msg});
+ const meHTML=esc(msg)+(img?`${msg?'<br>':''}<img src="${img}" style="max-height:130px;border-radius:8px;margin-top:4px">`:'');
+ chatPush('me',meHTML);AI_HIST.push({role:'user',content:msg||'[图片]'});
+ if(img)clearImg();
  const wi=chatPush('ai','<span class="muted">思考中…</span>');
- try{const r=await j('/api/ai/ask',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({message:msg,history:AI_HIST})});
-   let h=esc(r.reply||'');AI_HIST.push({role:'assistant',content:r.reply||''});
+ try{const r=await j('/api/ai/ask',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({message:msg,history:AI_HIST,image:img||''})});
+   let h=renderMD(r.reply||'');AI_HIST.push({role:'assistant',content:r.reply||''});
    if(r.analysis&&r.analysis.l1){h+='<div class="ana">'+[r.analysis.l1,r.analysis.l2,r.analysis.l3,r.analysis.kp].filter(Boolean).map(x=>`<span class="tag">${esc(x)}</span>`).join('')+'</div>';}
    if(r.chat_id){h+=`<div class="fb" data-cid="${r.chat_id}"><span class="fbb" onclick="chatFb(${r.chat_id},1,this)" title="有帮助">👍</span><span class="fbb" onclick="chatFb(${r.chat_id},-1,this)" title="没帮助">👎</span></div>`;}
    chatSet(wi,h);
    if(r.items&&r.items.length){const nMine=r.items.filter(q=>q.mine).length;
      const tip=nMine?`为你从题库调取 ${r.items.length} 道题,其中 ${nMine} 道来自你上传的题库:`:`为你从题库调取 ${r.items.length} 道对应的题(右侧可下载 PDF):`;
-     chatPush('cards',cardsHTML(r.items,tip));renderArtifact(r.items);}
+     const ci=chatPush('cards',cardsHTML(r.items,tip));renderArtifact(r.items);
+     scrollToFirstQ(ci);}
  }catch(e){chatSet(wi,'出错了:'+esc(''+e));}
  finally{AI_BUSY=false;chatPersist();}}
 async function aiSaveMine(){const inp=$('#chatin');const c=(inp?inp.value:'').trim();if(c.length<8){toast('请先粘贴一道完整的题');return;}
@@ -1020,7 +1127,7 @@ async function aiSaveMine(){const inp=$('#chatin');const c=(inp?inp.value:'').tr
    if(r.detail){chatSet(wi,esc(r.detail));return;}
    let h='已存入你的私有题库 ✓';if(r.analysis)h+='<div class="ana">'+[r.analysis.l1,r.analysis.l2,r.analysis.l3,r.analysis.kp].filter(Boolean).map(x=>`<span class="tag">${esc(x)}</span>`).join('')+'</div>';
    chatSet(wi,h);refreshMine();
-   if(r.items&&r.items.length){chatPush('cards',cardsHTML(r.items,`找到 ${r.items.length} 道对应/相似的题(右侧可下载 PDF):`));renderArtifact(r.items);}
+   if(r.items&&r.items.length){const ci=chatPush('cards',cardsHTML(r.items,`找到 ${r.items.length} 道对应/相似的题(右侧可下载 PDF):`));renderArtifact(r.items);scrollToFirstQ(ci);}
  }catch(e){chatSet(wi,'出错了:'+esc(''+e));}
  finally{AI_BUSY=false;chatPersist();}}
 
@@ -1562,6 +1669,7 @@ function go(v){
  [...document.querySelectorAll('#tabbar a')].forEach(a=>a.classList.toggle('on',a.dataset.v===hl));
  window.scrollTo(0,0);render(v);}
 document.addEventListener('click',e=>{if(e.target.matches('.q img'))e.target.classList.toggle('zoom');});
+document.addEventListener('paste',onPasteImg);
 document.addEventListener('keydown',e=>{
  if(e.target.id==='chatin'&&e.key==='Enter'&&!e.shiftKey){e.preventDefault();aiSend();}
  if(e.key==='Escape')closeAuth();});

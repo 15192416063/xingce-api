@@ -8,6 +8,7 @@ import time
 import functools
 import config
 import stats
+import method_kb
 
 
 # ---------- 懒加载,避免无 key 时启动就崩 ----------
@@ -94,6 +95,95 @@ def _invoke(messages, scene="其他"):
             last_err = e
             _mark_fail(ch["id"], e)
     raise RuntimeError(f"所有 AI 渠道均不可用,最后错误:{last_err}")
+
+
+def _has_vision() -> bool:
+    """是否有可用视觉模型:管理面板配的"支持看图"渠道,或 .env 里的 VISION_KEY。"""
+    try:
+        if [c for c in _channels() if c.get("vision")]:
+            return True
+    except Exception:
+        pass
+    return bool(config.VISION_KEY)
+
+
+def _vision_chat(system_text: str, user_text: str, image_paths=None,
+                 scene: str = "资料分析读图", max_tokens: int = 1600,
+                 image_urls=None) -> str:
+    """带图的对话补全:把图片(磁盘路径 image_paths 或 data-URL image_urls)连同文字
+    一起发给视觉模型(读图后再解题)。优先用管理面板的视觉渠道,否则回退 .env 硅基流动。"""
+    import base64
+    import requests
+    chans = [c for c in _channels() if c.get("vision")]
+    if not chans and config.VISION_KEY:
+        chans = [{"id": 0, "name": "硅基流动VL(.env)",
+                  "base_url": config.VISION_BASE_URL, "api_key": config.VISION_KEY,
+                  "model": config.VISION_MODEL, "vision": 1}]
+    if not chans:
+        raise RuntimeError("未配置视觉渠道")
+    content = [{"type": "text", "text": user_text}]
+    for p in (image_paths or [])[:4]:        # 最多带 4 张图,防超长
+        try:
+            with open(p, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+            content.append({"type": "image_url",
+                            "image_url": {"url": "data:image/png;base64," + b64}})
+        except Exception:
+            continue
+    for u in (image_urls or [])[:4]:         # 浏览器上传的 data-URL,直接透传
+        if u:
+            content.append({"type": "image_url", "image_url": {"url": u}})
+    if len(content) == 1:                    # 一张图都没读到 → 不值得走视觉
+        raise RuntimeError("无可用图片")
+    messages = ([{"role": "system", "content": system_text}] if system_text else [])
+    messages.append({"role": "user", "content": content})
+    last_err = None
+    for ch in chans:
+        try:
+            r = requests.post(
+                ch["base_url"].rstrip("/") + "/chat/completions",
+                headers={"Authorization": "Bearer " + ch["api_key"]},
+                json={"model": ch["model"], "messages": messages,
+                      "temperature": 0.2, "max_tokens": max_tokens,
+                      "frequency_penalty": 0.6, "presence_penalty": 0.3},
+                timeout=180)
+            r.raise_for_status()
+            data = r.json()
+            u = data.get("usage") or {}
+            stats.record_tokens(u.get("prompt_tokens", 0),
+                                u.get("completion_tokens", 0),
+                                scene=scene, channel="vision:" + ch["model"])
+            return data["choices"][0]["message"]["content"] or ""
+        except Exception as e:
+            last_err = e
+            if ch.get("id"):
+                _mark_fail(ch["id"], e)
+    raise RuntimeError(f"视觉渠道不可用:{last_err}")
+
+
+def _complete(sys_text: str, user_text: str, images, scene: str) -> str:
+    """统一出口:本题带图且有视觉模型 → 读图解析;否则/失败 → 纯文字解析。"""
+    if images and _has_vision():
+        try:
+            return _vision_chat(sys_text, user_text, images, scene)
+        except Exception:
+            pass   # 视觉失败绝不能让解析整体挂掉 → 回退纯文字
+    msgs = ([("system", sys_text)] if sys_text else []) + [("human", user_text)]
+    return _invoke(msgs, scene)
+
+
+def chat_vision(message: str, image_data_url: str) -> str:
+    """对话框传图:视觉模型读图(通常是一道行测题)并按方法论作答。
+    image_data_url = 浏览器传来的 data:image/...;base64,...。无视觉渠道时抛错由上层兜底。"""
+    sys_text = (method_kb.system_prompt() +
+                "\n\n学生发来一张图片,通常是一道行测题(可能含题干、选项、图形或图表)。"
+                "请先看懂图中内容,再按方法论解答:点明题型与考点 → 推理/计算过程 → 给出答案。"
+                "Markdown 分点、公式用 LaTeX、直接简洁、不试错不重复;图形推理只讲规律、不臆测细节。")
+    return _vision_chat(
+        sys_text,
+        message or "请解答图中的行测题;若图中没有完整题目,就描述图片内容并讲相关考点。",
+        image_paths=None, scene="对话读图", max_tokens=1800,
+        image_urls=[image_data_url]).strip()[:2500]
 
 
 def ocr_page(png_bytes: bytes) -> str:
@@ -409,17 +499,22 @@ def quick_classify(message: str):
     return None
 
 
-def solve(content: str, material: str = "") -> dict:
+def solve(content: str, material: str = "", l1: str = "", l2: str = "",
+          images=None) -> dict:
     """AI 解题:返回 {answer, explanation}。answer 不确定时为空串。
+    注入该题型方法论辅助推理;本题带图且有视觉模型时读图再解;
     生成的答案入库时标 origin=ai,前端明确提示「仅供参考」。"""
     mat = f"【材料】{material[:1500]}\n" if material else ""
-    prompt = f"""你是行测名师。解答下面的题。严格输出JSON,不要任何其他内容:
-{{"answer":"A","explanation":"解析:先点明考点,再给推理过程,150字内"}}
+    method = method_kb.method_context(l1, l2, content)
+    mblock = f"【本题方法论(据此推理)】\n{method}\n" if method else ""
+    prompt = f"""你是行测名师。解答下面的题(若附有图表/图形图片,先准确读图再解)。
+严格输出JSON,不要任何其他内容:
+{{"answer":"A","explanation":"解析:依方法论先点考点,再给推理过程,150字内"}}
 answer 只能是 A/B/C/D 单字母;若题目信息不足或你无法确定,answer 填空字符串。
-{mat}【题目】{content[:2500]}
+{mblock}{mat}【题目】{content[:2500]}
 JSON:"""
     try:
-        resp = _invoke(prompt, scene="AI解题").replace("```json", "").replace("```", "").strip()
+        resp = _complete("", prompt, images, "AI解题").replace("```json", "").replace("```", "").strip()
         try:
             data = json.loads(resp)
         except json.JSONDecodeError:
@@ -432,18 +527,33 @@ JSON:"""
             "explanation": (data.get("explanation") or "").strip()[:2000]}
 
 
-def explain(content: str, answer: str, material: str = "") -> str:
-    """已知正确答案,只生成解析(不让 AI 猜答案 → 解析必定对着正确答案讲,可靠)。
-    用自己的话讲、不复制教辅原文(避免版权);结果入库后全员共享、不重复花 token。"""
-    mat = f"【材料】{material[:1500]}\n" if material else ""
-    prompt = f"""你是行测名师。下面这道题的【正确答案是 {answer}】。请只写解析:
-- 先点明题型与考点,再给清晰推理过程,说明为什么选 {answer}
-- 150 字以内,用你自己的话讲,**不要复制任何教辅/书本原文**
-- 只输出解析文本,不要 JSON、不要重复题目与选项
-{mat}【题目】{content[:2500]}
-解析:"""
+def explain(content: str, answer: str, material: str = "",
+            l1: str = "", l2: str = "", images=None) -> str:
+    """已知正确答案,按【解析方法论框架】生成解析(不让 AI 猜答案 → 解析对着正确答案讲)。
+    注入守护层 system prompt + 该题型方法论,保证有理有据、思路一致;
+    用自己的话讲、不复制教辅原文(避免版权);入库后全员共享、不重复花 token。"""
+    mat = (f"【材料(解题依据,务必引用其中的具体数据)】\n{material[:1800]}\n"
+           if material else "")
+    sys = method_kb.system_prompt()
+    method = method_kb.method_context(l1, l2, content)
+    if method:
+        sys += "\n\n【本题方法论(严格据此组织解析,不要自创解法)】\n" + method
+    user = (f"请按方法论给出这道题的解析,像老师板书一样把过程做出来。\n"
+            f"【标准答案(以题库为准)】{answer}\n{mat}【题目】{content[:2500]}\n"
+            f"按系统设定的格式输出;讲清为什么是 {answer}、关键干扰项为何不对、点出考点。\n"
+            "资料分析:必须先在材料**或所附图表图片**中定位并写出具体数据,再列出公式与算式"
+            "一步步算到最终结果,不要只说思路不算数;只有数据确实无从获取时才讲思路、**绝不编造数字**。\n"
+            "排版:Markdown 分点呈现,不要写成一大段;所有公式、算式一律用 LaTeX"
+            "(行内 $...$、独立 $$...$$),不要把公式写成纯文字。\n"
+            "务必**直接、简洁**:判断出规律/思路后直接讲清并给出答案,"
+            "**绝不要罗列多种猜测、绝不要逐步试错、绝不要重复同样的话、绝不要写"
+            "'重新审视/重新分析/以上不成立/换角度'**。\n"
+            "图形推理特别注意:**只用三五句话**说清考查哪一类规律(对称/数量/位置/样式/空间重构)、"
+            "以及答案为什么对,**不要分很多步、不要逐幅图枚举坐标或反复试错**;"
+            "看不准就只给规律方向和答案,绝不硬编每幅图的细节。\n"
+            "用你自己的话讲,不要复制任何教辅/书本原文。")
     try:
-        return _invoke(prompt, scene="AI解析").strip()[:2000]
+        return _complete(sys, user, images, "AI解析").strip()[:2500]
     except Exception:
         return ""
 
@@ -451,22 +561,42 @@ def explain(content: str, answer: str, material: str = "") -> str:
 ERROR_TAGS = ("概念不清", "审题失误", "计算错误", "时间不够", "蒙错")
 
 
-def explain_wrong(content: str, correct: str, user_answer: str, topic: str) -> dict:
-    """讲错题:针对用户的错误作答讲(为什么错 + 考点),并顺手判一个错因标签。
+def explain_wrong(content: str, correct: str, user_answer: str, topic: str,
+                  l1: str = "", l2: str = "", material: str = "", images=None) -> dict:
+    """讲错题:先按方法论给出【完整、有理有据的解析】(资料分析要定位材料数据+列式计算,
+    对标官方解析质量),再针对用户的错误作答讲【为什么错】,并顺手判一个错因标签。
+    注入守护层 system prompt + 题型方法论 + 材料数据。
     一次调用同时拿到讲解 + error_tag(不拆多次请求,省 token)。
     返回 {explanation, error_tag}。同类提醒(历史错误次数)由调用方本地拼。"""
-    prompt = f"""你是行测讲题助手,像懂他的学长。基于以下信息讲解这道错题:
-[题目]:{content[:2200]}
-[正确答案]:{correct}
-[用户作答]:{user_answer}
-[考点]:{topic}
-输出要求(简洁、口语、≤220字):
-1. 为什么错:针对"他选了 {user_answer}"做具体分析,点出他错在哪一步(不要泛泛讲答案)
-2. 考点归属:一句话点明知识点与正确思路
-最后**另起一行只输出**这个 JSON(用于打错因标签,不要多余文字):
+    sys = method_kb.system_prompt()
+    method = method_kb.method_context(l1, l2, content)
+    if method:
+        sys += "\n\n【本题方法论(严格据此分步解题)】\n" + method
+    mat = (f"【材料(解题依据,务必引用其中的具体数据)】\n{material[:1800]}\n"
+           if material else "")
+    user = f"""这是一道用户【做错】的题。请输出两部分,中间空一行:
+
+一、【完整解析】严格按方法论把题做出来,像老师板书一样有理有据:
+ - 资料分析:第一步先在材料或所附图表图片中定位相关数据并写出具体数字;第二步写出公式与算式;第三步一步步算出结果;
+ - 言语/判断/数量等:按方法论步骤推理,每个关键判断给出依据;
+ - 结尾明确写"故正确答案为 {correct}"。
+二、【你为什么错】针对"他选了 {user_answer}"具体分析,指出他错在哪一步、踩了什么坑(不要泛泛复述答案)。
+
+{mat}【题目】{content[:2500]}
+【正确答案(以题库为准)】{correct}
+【他的作答】{user_answer}
+【考点】{topic}
+
+要求:解析详实、条理清楚但**简洁不啰嗦**,**Markdown 分点**呈现;所有公式与算式一律用 LaTeX
+(行内 $...$、独立 $$...$$),不要把公式写成纯文字;
+**绝不要罗列多种猜测、绝不要逐步试错、绝不要重复同样的话、绝不要写'重新审视/重新分析/以上不成立/换角度'**;
+图形推理:**只用三五句话**说清考查哪类规律(对称/数量/位置/样式/空间重构)和答案为什么对,
+**不要分很多步、不要逐幅图枚举坐标或反复试错**,看不准就只给规律方向和答案、不硬编细节;
+只有当数据确实无从获取时,才依据标准答案讲清思路与公式,**绝不编造数字**。
+最后**另起一行只输出**这个 JSON(打错因标签,前面不要带它):
 {{"error_tag":"概念不清|审题失误|计算错误|时间不够|蒙错"}}"""
     try:
-        raw = _invoke(prompt, scene="AI讲题").strip()
+        raw = _complete(sys, user, images, "AI讲题").strip()
     except Exception:
         return {"explanation": "", "error_tag": ""}
     tag, text = "", raw
@@ -478,7 +608,7 @@ def explain_wrong(content: str, correct: str, user_answer: str, topic: str) -> d
             tag = ""
         text = raw[:m.start()].strip()
     text = text.replace("```json", "").replace("```", "").strip()
-    return {"explanation": text[:1500], "error_tag": tag if tag in ERROR_TAGS else ""}
+    return {"explanation": text[:2500], "error_tag": tag if tag in ERROR_TAGS else ""}
 
 
 def update_memory(profile: str, recent_text: str) -> str:
@@ -501,12 +631,46 @@ def update_memory(profile: str, recent_text: str) -> str:
         return profile
 
 
+def ask_about_question(content, answer, explanation="", material="", images=None,
+                       history=None, message="", l1="", l2=""):
+    """针对【某一道具体题目】的多轮追问答疑:始终带着题干/标准答案/解析/方法论作上下文,
+    AI 不跑题到别的题。带图的题(图形/资料分析)走视觉模型读图。返回回复文本。"""
+    sysp = method_kb.system_prompt()
+    method = method_kb.method_context(l1, l2, content)
+    ctx = ["你正在就【下面这道具体的题】为学生答疑,所有回答都要紧扣这道题、不要跑题到别的题。",
+           f"【题目】\n{content[:2200]}",
+           f"【标准答案(以题库为准)】{answer or '(暂无)'}"]
+    if material:
+        ctx.append(f"【材料】{material[:1500]}")
+    if explanation:
+        ctx.append(f"【本题已有解析】{explanation[:1500]}")
+    if method:
+        ctx.append(f"【本题方法论】{method}")
+    sys_text = (sysp + "\n\n" + "\n".join(ctx) +
+                "\n\n回答要求:Markdown 分点、公式用 LaTeX(行内 $...$、独立 $$...$$);"
+                "直接简洁、不试错不重复;图形推理只讲规律、不臆测看不到的细节;不编造数字。")
+    hist = ""
+    for h in (history or [])[-6:]:
+        who = "学生" if h.get("role") == "user" else "老师"
+        c = (h.get("content") or "")[:600]
+        if c:
+            hist += f"{who}:{c}\n"
+    user_text = ((f"【之前的追问记录】\n{hist}\n" if hist else "")
+                 + f"【学生现在问】{message[:1500]}")
+    try:
+        return _complete(sys_text, user_text, images, "题目追问").strip()[:2500]
+    except Exception as e:
+        return f"(AI 暂时不可用:{e})"
+
+
 def chat(message: str, history=None) -> str:
     """行测辅导对话:简洁、专业地答疑/讲解方法/分析考点。"""
     msgs = [{"role": "system",
              "content": "你是专业的行测辅导老师。回答简洁、实用,善于分析题目考点、"
-                        "讲解解题方法与技巧。涉及具体题目时先点明题型与考点,再给思路。"
-                        "不要长篇大论,控制在200字内。"
+                        "讲解解题方法与技巧。涉及具体题目时先点明题型与考点,再给思路。\n"
+                        "格式要求:用 Markdown **分点**作答,不要写成一大段;公式用 LaTeX"
+                        "(行内 $...$、独立 $$...$$);直接给最终结论,**不要展示试错/自我纠正过程**;"
+                        "图形推理只讲方法规律、不臆测看不到的具体图形。\n"
                         "重要:绝不要在回复里自己编写、列出或罗列完整的练习题或选项"
                         "(A/B/C/D 等)。当用户想做题时,系统会自动从真实题库调取带图真题"
                         "展示在你的回复下方;你只需用一两句话说明将为他推荐哪类题、"
@@ -555,9 +719,16 @@ def chat_reco(message: str, history=None, profile: str = "", learning: str = "")
         "· '换个简单的/太难了' = 同题型更简单;'来点资料分析' = 切换题型;\n"
         "· 问方法/考点/概念 = 只答疑不给题(want=false);要题/练习 = want=true。\n"
         f"l1 只能从 [{L1}] 里选;l2 是细分题型(如 图形推理/逻辑判断/逻辑填空/增长率/比重 等)。\n"
-        "reply 写法(关键):\n"
-        "· 学生在**问方法/考点/概念**时,要讲得**详实、有逻辑、分点**:点明适用情形→解题步骤→"
-        "口诀或一句话举例,把'为什么'讲透,可到 400 字;\n"
+        "reply 写法(关键,务必遵守):\n"
+        "· 用 Markdown 组织:加粗小标题 + 有序/无序列表**分点**,每点一行,"
+        "**绝不要写成一大段**密密麻麻的文字;\n"
+        "· 公式一律用 LaTeX:行内用 $...$,独立成行用 $$...$$,不要把公式当普通文字写。"
+        "例:$比重=\\dfrac{部分量}{整体量}\\times100\\%$;\n"
+        "· 直接给出**最终、正确、条理清晰**的讲解;**绝不展示试错或自我纠正过程**"
+        "(不准出现'分析有误''重新分析''我再想想''等一下'之类的字样);\n"
+        "· 图形推理:你看不到具体图形,因此只讲**判型方法、常见规律与口诀、从哪下手排查**,"
+        "**不要臆测或编造**对某张具体图的逐一分析;\n"
+        "· 学生在**问方法/考点/概念**时,把'为什么'讲透,分点、可到 500 字;\n"
         "· 学生**要题/练习**时,只简短一两句说明给TA推荐哪类题(题目由系统从真题库调取),"
         "**绝不要自己编题或列 A/B/C/D 选项**。\n"
         "【只输出】下面这个 JSON,不要输出任何其它文字:\n"
@@ -586,7 +757,7 @@ def chat_reco(message: str, history=None, profile: str = "", learning: str = "")
     if not isinstance(data, dict) or "reply" not in data:
         # 模型只回了对话文本、没给 JSON → 用它当回复,意图靠上下文兜底推断
         c = quick_classify(message) or _last_topic(history)
-        return {"reply": (raw[:600] or "好的。"), "want": bool(c),
+        return {"reply": (raw[:3000] or "好的。"), "want": bool(c),
                 "l1": c["l1"] if c else "", "l2": (c.get("l2") if c else "") or "",
                 "summary": (c.get("summary") if c else "") or message}
     l1 = (data.get("l1") or "").strip()
