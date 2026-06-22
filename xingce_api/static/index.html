@@ -22,11 +22,11 @@
 <script type="application/ld+json">
 {"@context":"https://schema.org","@type":"WebApplication","name":"上岸自习室·行测智能题库","url":"{{SITE_URL}}/","applicationCategory":"EducationApplication","operatingSystem":"Web","inLanguage":"zh-CN","description":"上传行测真题PDF,AI自动切题入库,对话刷题、整卷限时模考、错题本自动复习,国考省考行测备考。"}
 </script>
-<!-- Markdown 渲染 + LaTeX 公式(CDN;离线时自动降级为纯文本,不影响使用) -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
-<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<!-- Markdown 渲染 + LaTeX 公式(本地自托管;jsDelivr 在国内常被墙/超时,自托管才稳) -->
+<link rel="stylesheet" href="/vendor/katex.min.css">
+<script src="/vendor/katex.min.js"></script>
+<script src="/vendor/auto-render.min.js"></script>
+<script src="/vendor/marked.min.js"></script>
 <style>
 /* ============================================================
    设计语言:「自习室」
@@ -848,8 +848,15 @@ function chatPersist(){
 /* AI 回复:Markdown 分点 + LaTeX 渲染。CDN 没加载到就降级为纯文本+换行,不报错。 */
 function renderMD(t){
  if(!t)return '';
- try{if(window.marked&&marked.parse)return marked.parse(String(t),{breaks:true,gfm:true});}catch(e){}
- return esc(String(t)).replace(/\n/g,'<br>');
+ // 先把 LaTeX 公式抠出来用纯字母占位符替换,避免 marked 把公式里的下划线(→斜体)、
+ // \% 等转义符吃掉,破坏 KaTeX 识别($...$ 之前先保护起来,marked 之后再原样放回)
+ const math=[];let s=String(t);
+ s=s.replace(/\$\$([\s\S]+?)\$\$/g,m=>{math.push(m);return 'XMATHX'+(math.length-1)+'XENDX';});
+ s=s.replace(/\$([^\$\n]+?)\$/g,m=>{math.push(m);return 'XMATHX'+(math.length-1)+'XENDX';});
+ let html;
+ try{html=(window.marked&&marked.parse)?marked.parse(s,{breaks:true,gfm:true}):esc(s).replace(/\n/g,'<br>');}
+ catch(e){html=esc(s).replace(/\n/g,'<br>');}
+ return html.replace(/XMATHX(\d+)XENDX/g,(m,i)=>math[+i]||'');  // 还原公式,交给 typeset 渲染
 }
 function typeset(el){
  if(!el||!window.renderMathInElement)return;
