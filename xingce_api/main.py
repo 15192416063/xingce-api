@@ -30,7 +30,7 @@ from db import (init_db, SessionLocal, IngestionJob, Question, QuestionImage,
                 PracticeRecord, WrongBook, MaterialGroup, Favorite, User, News,
                 AiUsage, StatDaily, VisitDay, LoginLog, Setting, AuditLog, AiChannel,
                 Paper, InviteCode, ExamInfo, MockExam, TokenStat, ChatLog, Feedback,
-                UserMemory, WrongExplain, QuestionChat)
+                UserMemory, WrongExplain, QuestionChat, ExplainEvent, ExplainFeedback)
 import exams
 
 # ---- 错误日志:轮转文件,排障不靠猜(稳定性) ----
@@ -273,9 +273,11 @@ def auth_config():
 
 @app.post("/api/auth/register")
 def register(request: Request, username: str = Form(...), password: str = Form(...),
-             admin_code: str = Form(""), invite: str = Form("")):
+             admin_code: str = Form(""), invite: str = Form(""), source: str = Form("")):
     username = username.strip()
     invite = invite.strip()[:32]
+    # 注册来源(渠道/分享标识),仅留字母数字下划线连字符,防脏数据
+    source = re.sub(r"[^\w\-]", "", (source or "").strip())[:40]
     # 用户名:3-20位,仅限中文/字母/数字/下划线(防注入垃圾字符与超长DoS)
     if not re.fullmatch(r"[\w一-龥]{3,20}", username):
         raise HTTPException(400, "用户名3~20位,仅限中文、字母、数字、下划线")
@@ -302,7 +304,7 @@ def register(request: Request, username: str = Form(...), password: str = Form(.
             db.close()
             raise HTTPException(403, "该邀请码名额已用完")
     u = User(username=username, password_hash=auth.hash_password(password),
-             role=role, invite_code=invite if iv else "")
+             role=role, invite_code=invite if iv else "", source=source or "direct")
     db.add(u)
     if iv:
         iv.used_count += 1
@@ -539,6 +541,18 @@ def _question_images(db, q):
     return out
 
 
+def _log_explain(user_id: int, qid: int, qtype: str, kind: str, cached: bool):
+    """记一条解析触发事件(冷启动核心功能使用信号)。失败不影响主流程。"""
+    try:
+        db = SessionLocal()
+        db.add(ExplainEvent(user_id=user_id, question_id=qid, qtype=qtype or "",
+                            kind=kind, cached=1 if cached else 0))
+        db.commit()
+        db.close()
+    except Exception:
+        _logger.exception("log explain event failed")
+
+
 @app.post("/api/practice/explain")
 def practice_explain(question_id: int = Form(...), user_answer: str = Form(""),
                      u: User = Depends(auth.current_user)):
@@ -591,6 +605,7 @@ def practice_explain(question_id: int = Form(...), user_answer: str = Form(""),
         db.close()
     prior = max(0, hist - 1)
     remind = f"💡 这个考点你之前也错过 {prior} 次,这次把它记牢。" if prior > 0 else ""
+    _log_explain(u.id, qid, l2, "wrong", bool(cached))
     return {"explanation": text, "error_tag": tag, "remind": remind,
             "topic": topic, "cached": bool(cached)}
 
@@ -611,7 +626,9 @@ def ai_answer(qid: int, u: User = Depends(auth.current_user)):
     # 1) 已有解析 → 直接复用
     if (q.explanation or "").strip():
         ans, exp, origin = q.answer, q.explanation, q.answer_origin or "official"
+        qtype = q.category_l2
         db.close()
+        _log_explain(u.id, qid, qtype, "solve", True)
         return {"answer": ans, "explanation": exp, "origin": origin, "cached": True}
     ans = (q.answer or "").strip()
     material = ""
@@ -633,6 +650,7 @@ def ai_answer(qid: int, u: User = Depends(auth.current_user)):
         origin = q.answer_origin or "official"
         db.commit()
         db.close()
+        _log_explain(u.id, qid, ql2, "solve", False)
         return {"answer": ans, "explanation": exp, "origin": origin, "cached": False}
     # 3) 没有答案 → AI 解题(猜)
     r = ai.solve(content, material, ql1, ql2, images)
@@ -653,7 +671,37 @@ def ai_answer(qid: int, u: User = Depends(auth.current_user)):
     db.commit()
     exp = q.explanation
     db.close()
+    _log_explain(u.id, qid, ql2, "solve", False)
     return {"answer": r["answer"], "explanation": exp, "origin": "ai", "cached": False}
+
+
+@app.post("/api/explain/feedback")
+def explain_feedback(payload: dict = Body(...), u: User = Depends(auth.current_user)):
+    """解析反馈(质量监控金矿):有用/没用/报错。同(用户,题,kind)覆盖,避免刷量。"""
+    qid = int(payload.get("question_id") or 0)
+    kind = (payload.get("kind") or "solve")[:16]
+    rating = (payload.get("rating") or "").strip()
+    text = (payload.get("text") or "").strip()[:500]
+    if rating not in ("useful", "useless", "error"):
+        raise HTTPException(400, "反馈类型不合法")
+    if not qid:
+        raise HTTPException(400, "缺少题目")
+    db = SessionLocal()
+    q = db.get(Question, qid)
+    qtype = (q.category_l2 if q else "") or ""
+    row = (db.query(ExplainFeedback)
+           .filter(ExplainFeedback.user_id == u.id, ExplainFeedback.question_id == qid,
+                   ExplainFeedback.kind == kind).first())
+    if row:
+        row.rating = rating
+        if text:
+            row.text = text
+    else:
+        db.add(ExplainFeedback(user_id=u.id, question_id=qid, qtype=qtype,
+                               kind=kind, rating=rating, text=text))
+    db.commit()
+    db.close()
+    return {"ok": True}
 
 
 @app.get("/api/questions/{qid}/thread")
@@ -1962,6 +2010,119 @@ def admin_metrics(admin: User = Depends(auth.require_admin)):
                      "bad_ips": [{"ip": ip, "fails": n} for ip, n in bad_ips]},
         "ops": security.integrity_status(),
         "trend": trend,
+    }
+
+
+@app.get("/api/admin/insight")
+def admin_insight(admin: User = Depends(auth.require_admin)):
+    """冷启动验证面板(仅管理员):激活率 / 留存 cohort / 使用深度 / 自来水渠道 / AI 解析质量。
+    回答"有没有人愿意用、用了还回不回来、AI 解析靠不靠谱"。数据量小,实时查询即可。"""
+    db = SessionLocal()
+    total_users = db.query(User).count()
+
+    # ---- B 激活率:注册后真正做过 ≥1 题的用户占比 ----
+    activated = db.query(func.count(func.distinct(PracticeRecord.user_id))).scalar() or 0
+    never = max(0, total_users - activated)
+    activation = round(activated / total_users, 4) if total_users else 0.0
+
+    # ---- C 留存 cohort:近 14 天每日新增 → 次日/3日/7日是否回访(VisitDay 为活跃口径) ----
+    horizon = date.today() - timedelta(days=21)   # 多取几天保证 7 日窗口完整
+    regs = db.query(User.id, User.created_at).filter(User.created_at >= datetime.combine(horizon, datetime.min.time())).all()
+    reg_by_day = {}                               # day -> set(user_id)
+    for uid, ca in regs:
+        d = (ca.date() if hasattr(ca, "date") else ca)
+        reg_by_day.setdefault(str(d), set()).add(uid)
+    # 活跃集合:(user_id, 'YYYY-MM-DD')
+    active = set()
+    for uid, dy in db.query(VisitDay.user_id, VisitDay.day).filter(VisitDay.day >= str(horizon)).all():
+        active.add((uid, dy))
+    cohorts = []
+    for i in range(14, 0, -1):
+        d = date.today() - timedelta(days=i)
+        ds = str(d)
+        ids = reg_by_day.get(ds, set())
+        n = len(ids)
+        def ret(days):
+            if not n:
+                return None
+            tgt = str(d + timedelta(days=days))
+            if tgt > str(date.today()):           # 窗口还没到,不算(避免假 0%)
+                return None
+            hit = sum(1 for uid in ids if (uid, tgt) in active)
+            return round(hit / n, 4)
+        cohorts.append({"day": ds[5:], "new": n,
+                        "d1": ret(1), "d3": ret(3), "d7": ret(7)})
+
+    # ---- D 使用深度:人均做题/解析 + 题型排行 ----
+    attempts = db.query(PracticeRecord).count()
+    explain_users = db.query(func.count(func.distinct(ExplainEvent.user_id))).scalar() or 0
+    explains = db.query(ExplainEvent).count()
+    per_user_q = round(attempts / activated, 1) if activated else 0
+    per_user_e = round(explains / explain_users, 1) if explain_users else 0
+    q_rank = [{"qtype": (t or "未分类"), "n": int(c)} for t, c in
+              (db.query(Question.category_l2, func.count(PracticeRecord.id))
+               .join(Question, Question.id == PracticeRecord.question_id)
+               .group_by(Question.category_l2)
+               .order_by(func.count(PracticeRecord.id).desc()).limit(12).all())]
+    e_rank = [{"qtype": (t or "未分类"), "n": int(c)} for t, c in
+              (db.query(ExplainEvent.qtype, func.count(ExplainEvent.id))
+               .group_by(ExplainEvent.qtype)
+               .order_by(func.count(ExplainEvent.id).desc()).limit(12).all())]
+
+    # ---- E 自来水:按注册来源分组 ----
+    sources = [{"source": (s or "direct"), "n": int(c)} for s, c in
+               (db.query(User.source, func.count(User.id))
+                .group_by(User.source).order_by(func.count(User.id).desc()).all())]
+
+    # ---- F AI 解析质量:反馈分布 + 问题解析列表 + 各题型没用率 ----
+    fb_dist = {"useful": 0, "useless": 0, "error": 0}
+    for r, c in db.query(ExplainFeedback.rating, func.count(ExplainFeedback.id)).group_by(ExplainFeedback.rating).all():
+        if r in fb_dist:
+            fb_dist[r] = int(c)
+    fb_total = sum(fb_dist.values())
+    # 被标记 没用/报错 的解析,按题聚合、倒序——发现薄弱点的金矿
+    bad = (db.query(ExplainFeedback.question_id, ExplainFeedback.qtype,
+                    func.count(ExplainFeedback.id), func.max(ExplainFeedback.created_at))
+           .filter(ExplainFeedback.rating.in_(("useless", "error")))
+           .group_by(ExplainFeedback.question_id, ExplainFeedback.qtype)
+           .order_by(func.count(ExplainFeedback.id).desc()).limit(30).all())
+    bad_list = []
+    for qid, qt, c, _ in bad:
+        q = db.get(Question, qid)
+        last = (db.query(ExplainFeedback.text, ExplainFeedback.rating)
+                .filter(ExplainFeedback.question_id == qid,
+                        ExplainFeedback.rating.in_(("useless", "error")),
+                        ExplainFeedback.text != "")
+                .order_by(ExplainFeedback.id.desc()).first())
+        bad_list.append({"qid": qid, "qtype": qt or "未分类", "flags": int(c),
+                         "preview": (q.content[:60] if q and q.content else "(题目已删)"),
+                         "note": (last[0] if last else ""), "note_kind": (last[1] if last else "")})
+    # 各题型没用率 = (useless+error) / 该题型反馈总数
+    bytype = {}
+    for qt, r, c in (db.query(ExplainFeedback.qtype, ExplainFeedback.rating, func.count(ExplainFeedback.id))
+                     .group_by(ExplainFeedback.qtype, ExplainFeedback.rating).all()):
+        k = qt or "未分类"
+        d = bytype.setdefault(k, {"bad": 0, "all": 0})
+        d["all"] += int(c)
+        if r in ("useless", "error"):
+            d["bad"] += int(c)
+    bad_rate = sorted(
+        [{"qtype": k, "bad": v["bad"], "total": v["all"],
+          "rate": round(v["bad"] / v["all"], 4) if v["all"] else 0}
+         for k, v in bytype.items() if v["all"] >= 1],
+        key=lambda x: x["rate"], reverse=True)
+    db.close()
+
+    return {
+        "activation": {"total": total_users, "activated": activated,
+                       "never": never, "rate": activation},
+        "retention": cohorts,
+        "depth": {"per_user_q": per_user_q, "per_user_e": per_user_e,
+                  "attempts": attempts, "explains": explains,
+                  "q_rank": q_rank, "e_rank": e_rank},
+        "sources": sources,
+        "quality": {"dist": fb_dist, "total": fb_total,
+                    "bad_list": bad_list, "bad_rate": bad_rate},
     }
 
 

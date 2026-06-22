@@ -184,6 +184,7 @@ class User(Base):
     # 令牌版本:登录/改密时+1,旧令牌立即全部失效(单设备登录/吊销的核心)
     token_ver: Mapped[int] = mapped_column(Integer, default=0)
     invite_code: Mapped[str] = mapped_column(String(32), default="")  # 注册时用的邀请码
+    source: Mapped[str] = mapped_column(String(40), default="")  # 注册来源/渠道:xhs/zhihu/share/direct
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
@@ -362,6 +363,33 @@ class QuestionChat(Base):
     question_id: Mapped[int] = mapped_column(Integer, index=True)
     role: Mapped[str] = mapped_column(String(16), default="user")  # user / assistant
     content: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ExplainEvent(Base):
+    """解析触发事件:用户对某题请求/查看 AI 解析记一条(冷启动观测"核心功能使用信号")。
+    kind: solve(生成解析/AI解答) / wrong(为什么错·错题讲解)。cached=1 表示命中缓存。"""
+    __tablename__ = "explain_event"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    question_id: Mapped[int] = mapped_column(Integer, index=True)
+    qtype: Mapped[str] = mapped_column(String(32), default="")   # 二级题型(category_l2)
+    kind: Mapped[str] = mapped_column(String(16), default="solve")
+    cached: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ExplainFeedback(Base):
+    """解析反馈(质量监控金矿):用户对某条 AI 解析点"有用/没用/报错"。
+    rating: useful / useless / error。同(用户,题,kind)只保留最新一条(前端覆盖)。"""
+    __tablename__ = "explain_feedback"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    question_id: Mapped[int] = mapped_column(Integer, index=True)
+    qtype: Mapped[str] = mapped_column(String(32), default="")
+    kind: Mapped[str] = mapped_column(String(16), default="solve")
+    rating: Mapped[str] = mapped_column(String(16), default="")   # useful/useless/error
+    text: Mapped[str] = mapped_column(Text, default="")           # 可选文字反馈
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

@@ -178,12 +178,19 @@ def chat_vision(message: str, image_data_url: str) -> str:
     sys_text = (method_kb.system_prompt() +
                 "\n\n学生发来一张图片,通常是一道行测题(可能含题干、选项、图形或图表)。"
                 "请先看懂图中内容,再按方法论解答:点明题型与考点 → 推理/计算过程 → 给出答案。"
-                "Markdown 分点、公式用 LaTeX、直接简洁、不试错不重复;图形推理只讲规律、不臆测细节。")
-    return _vision_chat(
+                "Markdown 分点、公式用 LaTeX、直接简洁、不试错不重复;图形推理只讲规律、不臆测细节。\n"
+                "⚠️诚实第一:你是【直接读图】作答,没有标准答案兜底,可能看错。"
+                "**图形推理(尤其立体拼合、空间折叠、截面)是你最容易出错的题型**——"
+                "这类题如果没有十足把握,要**明确说出'我不太确定,这类立体/图形题读图容易出错'**,"
+                "给出倾向性答案即可,**不要把没把握的答案说得斩钉截铁**;宁可坦白不确定,也不要误导。")
+    reply = _vision_chat(
         sys_text,
         message or "请解答图中的行测题;若图中没有完整题目,就描述图片内容并讲相关考点。",
         image_paths=None, scene="对话读图", max_tokens=1800,
-        image_urls=[image_data_url]).strip()[:2500]
+        image_urls=[image_data_url]).strip()[:2400]
+    # 自解无官方答案兜底,统一加一句诚实提示:引导用户回题库看锚定标准答案的解析
+    return reply + ("\n\n> 📌 以上是我**直接读图**的作答,可能出错。若这是真题,"
+                    "建议在题库搜到原题、点「AI 解答」查看**锚定官方答案**的解析(那个一定对)。")
 
 
 def ocr_page(png_bytes: bytes) -> str:
@@ -511,6 +518,8 @@ def solve(content: str, material: str = "", l1: str = "", l2: str = "",
 严格输出JSON,不要任何其他内容:
 {{"answer":"A","explanation":"解析:依方法论先点考点,再给推理过程,150字内"}}
 answer 只能是 A/B/C/D 单字母;若题目信息不足或你无法确定,answer 填空字符串。
+注意:这是 AI 自行解答、没有标准答案兜底。**图形推理(尤其立体拼合、空间折叠、截面)读图极易出错**——
+这类题没有十足把握时,**宁可把 answer 填空字符串(交给人工/官方答案),也不要硬猜一个可能错的字母**。
 {mblock}{mat}【题目】{content[:2500]}
 JSON:"""
     try:
@@ -539,7 +548,11 @@ def explain(content: str, answer: str, material: str = "",
     if method:
         sys += "\n\n【本题方法论(严格据此组织解析,不要自创解法)】\n" + method
     user = (f"请按方法论给出这道题的解析,像老师板书一样把过程做出来。\n"
-            f"【标准答案(以题库为准)】{answer}\n{mat}【题目】{content[:2500]}\n"
+            f"【标准答案(题库官方答案,铁定正确)】{answer}\n{mat}【题目】{content[:2500]}\n"
+            f"⚠️硬性要求:本题答案**就是 {answer}**,你的唯一任务是讲清"
+            f"**为什么是 {answer}**;**严禁给出、改成或暗示其他选项**;"
+            f"若你读图/推理的结论与 {answer} 冲突,那是你想错了(图形/立体类尤其容易看错),"
+            f"请以 {answer} 为准重新组织讲解,绝不要在解析里写'答案应为X''我认为是X'之类与 {answer} 不一致的话。\n"
             f"按系统设定的格式输出;讲清为什么是 {answer}、关键干扰项为何不对、点出考点。\n"
             "资料分析:必须先在材料**或所附图表图片**中定位并写出具体数据,再列出公式与算式"
             "一步步算到最终结果,不要只说思路不算数;只有数据确实无从获取时才讲思路、**绝不编造数字**。\n"
@@ -583,9 +596,12 @@ def explain_wrong(content: str, correct: str, user_answer: str, topic: str,
 二、【你为什么错】针对"他选了 {user_answer}"具体分析,指出他错在哪一步、踩了什么坑(不要泛泛复述答案)。
 
 {mat}【题目】{content[:2500]}
-【正确答案(以题库为准)】{correct}
+【正确答案(题库官方答案,铁定正确)】{correct}
 【他的作答】{user_answer}
 【考点】{topic}
+
+⚠️硬性要求:本题正确答案**就是 {correct}**,严禁在解析里给出、改成或暗示其他选项;
+若你读图/推理的结论与 {correct} 冲突(图形/立体类尤其容易看错),那是你想错了,请以 {correct} 为准重讲。
 
 要求:解析详实、条理清楚但**简洁不啰嗦**,**Markdown 分点**呈现;所有公式与算式一律用 LaTeX
 (行内 $...$、独立 $$...$$),不要把公式写成纯文字;
@@ -639,7 +655,10 @@ def ask_about_question(content, answer, explanation="", material="", images=None
     method = method_kb.method_context(l1, l2, content)
     ctx = ["你正在就【下面这道具体的题】为学生答疑,所有回答都要紧扣这道题、不要跑题到别的题。",
            f"【题目】\n{content[:2200]}",
-           f"【标准答案(以题库为准)】{answer or '(暂无)'}"]
+           f"【标准答案(题库官方答案,铁定正确)】{answer or '(暂无)'}"]
+    if answer:
+        ctx.append(f"⚠️本题答案就是 {answer},严禁给出、改成或暗示其他选项;"
+                   f"若你读图/推理与 {answer} 冲突(图形/立体类尤其容易看错),以 {answer} 为准,是你想错了。")
     if material:
         ctx.append(f"【材料】{material[:1500]}")
     if explanation:

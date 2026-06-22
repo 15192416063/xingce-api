@@ -288,6 +288,10 @@ input:focus,select:focus{border-color:var(--green)}
 .srow>span:first-child{width:120px;font-size:13px;color:var(--ink)}
 .srow input{flex:1;min-width:180px;font-size:13px;padding:6px 9px;border:1.5px solid var(--line);border-radius:8px;font-family:inherit}
 .wexp{margin-top:8px;background:#fff;border-left:3px solid var(--green);border-radius:8px;padding:9px 11px;font-size:13px;line-height:1.75}
+.fbbar{margin-top:9px;padding-top:8px;border-top:1px dashed #e3e0d2;display:flex;align-items:center;flex-wrap:wrap;gap:7px}
+.fbq{font-size:12px;color:var(--muted)}
+.fbb{font-size:12px;padding:3px 9px;border:1px solid #ddd9cc;background:#fff;border-radius:14px;cursor:pointer;color:#555;line-height:1.6}
+.fbb:hover{border-color:var(--green);color:var(--green);background:#f3faf4}
 .qthread{margin-top:8px;background:#fbfaf4;border:1px solid #ece9dc;border-radius:10px;padding:10px}
 .qthread .tlog{max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:8px}
 .qthread .tmsg{font-size:13px;line-height:1.75;padding:8px 11px;border-radius:9px;max-width:92%;word-wrap:break-word;overflow-wrap:anywhere}
@@ -506,6 +510,10 @@ input:focus,select:focus{border-color:var(--green)}
 <script>
 const API="";
 let TOKEN=localStorage.getItem('xc_token')||'';
+/* 注册来源:首次进入(带 ?from=/?ref=/?utm_source= 等渠道参数)即记下,首触为准,供注册时上报 */
+(function(){try{const p=new URLSearchParams(location.search);
+ const s=p.get('from')||p.get('ref')||p.get('source')||p.get('utm_source')||'';
+ if(s&&!localStorage.getItem('xc_src'))localStorage.setItem('xc_src',s.slice(0,40));}catch(e){}})();
 let USER=null, STATS=null, AUTH_MODE='login';
 const $=(s,r=document)=>r.querySelector(s);
 function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1800);}
@@ -591,7 +599,8 @@ async function syncAuthUI(){
 function swAuth(){AUTH_MODE=AUTH_MODE==='login'?'register':'login';syncAuthUI();}
 async function doAuth(){
  const fd=new FormData();fd.append('username',$('#g-user').value);fd.append('password',$('#g-pass').value);
- if(AUTH_MODE==='register'){fd.append('admin_code',$('#g-code').value);fd.append('invite',$('#g-invite').value);}
+ if(AUTH_MODE==='register'){fd.append('admin_code',$('#g-code').value);fd.append('invite',$('#g-invite').value);
+   fd.append('source',localStorage.getItem('xc_src')||'');}
  const r=await j('/api/auth/'+AUTH_MODE,{method:'POST',body:fd});
  if(r.detail){$('#g-err').textContent=r.detail;return;}
  TOKEN=r.token;localStorage.setItem('xc_token',TOKEN);USER=r.user;closeAuth();boot();
@@ -754,6 +763,20 @@ async function pickOpt(id,k,el){
     +` <button class="btn sm ghost" onclick="explainWrong(${id},'${k}',this)">${ic('spark',14)} 为什么错?AI 讲解</button>`;}
  typeset(res);
 }
+/* ---------- 解析反馈(质量监控金矿:有用/没用/报错) ---------- */
+function fbBar(qid,kind){return `<div class="fbbar" data-q="${qid}" data-k="${kind}">`
+ +`<span class="fbq">这条解析对你有帮助吗?</span>`
+ +`<button type="button" class="fbb" onclick="explainFb(this,'useful')">👍 有用</button>`
+ +`<button type="button" class="fbb" onclick="explainFb(this,'useless')">👎 没用</button>`
+ +`<button type="button" class="fbb" onclick="explainFb(this,'error')">⚠️ 解析有错</button></div>`;}
+async function explainFb(btn,rating){
+ const bar=btn.closest('.fbbar');if(!bar)return;
+ const qid=+bar.dataset.q,kind=bar.dataset.k;let text='';
+ if(rating!=='useful'){text=(prompt(rating==='error'?'解析哪里有错?(可留空直接确定)':'哪里不满意?帮我们改进(可留空)')||'').slice(0,500);}
+ try{await j('/api/explain/feedback',{method:'POST',headers:{'content-type':'application/json'},
+   body:JSON.stringify({question_id:qid,kind,rating,text})});}
+ catch(e){toast('反馈提交失败:'+e);return;}
+ bar.innerHTML='<span class="fbq">已记录,谢谢你的反馈 🙏</span>';}
 async function explainWrong(id,myAns,btn){const res=$('#r'+id);
  btn.disabled=true;const old=btn.innerHTML;btn.textContent='讲解中…';
  let r;try{const fd=new FormData();fd.append('question_id',id);fd.append('user_answer',myAns);
@@ -761,7 +784,7 @@ async function explainWrong(id,myAns,btn){const res=$('#r'+id);
  catch(e){btn.disabled=false;btn.innerHTML=old;toast('讲解失败:'+e);return;}
  if(r.detail){toast(r.detail);btn.disabled=false;btn.innerHTML=old;return;}
  const tag=r.error_tag?`<span class="tag diff">错因·${esc(r.error_tag)}</span> `:'';
- res.insertAdjacentHTML('beforeend',`<div class="wexp">${tag}<div class="mdbody" style="margin-top:6px">${renderMD(r.explanation)}</div>${r.remind?'<div style="margin-top:6px;color:var(--orange);font-weight:600">'+esc(r.remind)+'</div>':''}</div>`);
+ res.insertAdjacentHTML('beforeend',`<div class="wexp">${tag}<div class="mdbody" style="margin-top:6px">${renderMD(r.explanation)}</div>${r.remind?'<div style="margin-top:6px;color:var(--orange);font-weight:600">'+esc(r.remind)+'</div>':''}${fbBar(id,'wrong')}</div>`);
  typeset(res);btn.remove();}
 async function aiSolve(id,myAns){const res=$('#r'+id);res.className='res info';
  const t0=Date.now();let timer=setInterval(()=>{const sec=Math.round((Date.now()-t0)/1000);
@@ -776,7 +799,7 @@ async function aiSolve(id,myAns){const res=$('#r'+id);res.className='res info';
  res.className=hit?'res ok':'res info';
  res.innerHTML=`${hit?'与你的作答一致!':'AI 认为答案是 <b>'+r.answer+'</b>'}
   <span class="tag diff">AI 生成,仅供参考${r.cached?' · 已缓存':''}</span>`
-  +(r.explanation?'<br>解析:'+renderMD(r.explanation):'');typeset(res);}
+  +(r.explanation?'<br>解析:'+renderMD(r.explanation)+fbBar(id,'solve'):'');typeset(res);}
 async function findSim(id){const box=$('#r'+id);box.className='res info';box.innerHTML='检索中…';
  const r=await j('/api/practice/similar/'+id);
  if(r.detail){box.innerHTML=r.detail;return;}
@@ -1399,9 +1422,10 @@ V.stats=async()=>{const s=await j('/api/stats');const acc=s.accuracy==null?'—'
    <div class="stat"><div class="n" data-cu="${s.active_days}">0</div><div class="l">学习天数</div></div></div>`;};
 
 /* ---------- 运营管理(管理员) ---------- */
-V.admin=async()=>{setTimeout(()=>{loadPending();loadMetrics();loadSettings();loadChannels();loadInvites();loadUsers();loadSite();loadFeedback();},0);
+V.admin=async()=>{setTimeout(()=>{loadPending();loadMetrics();loadInsight();loadSettings();loadChannels();loadInvites();loadUsers();loadSite();loadFeedback();},0);
  return `<h2 class="page">运营管理 <span class="muted" style="font-size:13px;font-family:system-ui;font-weight:400">(管理员)</span></h2>
  <div id="metrics"><div class="card muted center">统计加载中…</div></div>
+ <div id="insight"><div class="card muted center">验证指标加载中…</div></div>
  <div class="card"><b>账号管理</b> <span class="muted" style="font-size:12px">每个账号的行为画像:登录/活跃天/停留/对话/粘贴题</span>
   <div style="margin-top:8px"><input id="usearch" placeholder="搜索用户名" style="font-size:13px;width:170px" onkeydown="if(event.key==='Enter')loadUsers()"> <button class="btn sm" onclick="loadUsers()">搜索</button></div>
   <div id="users" style="margin-top:10px" class="muted">加载中…</div></div>
@@ -1602,6 +1626,45 @@ async function loadMetrics(){let m;try{m=await j('/api/admin/metrics');}catch(e)
    <div class="stat"><div class="n ${m.ops&&m.ops.ok===false?'bad':'ok'}" style="font-size:18px">${m.ops&&m.ops.ok===false?'异常':'正常'}</div><div class="l">数据库完整性${m.ops&&m.ops.checked?' · 检于 '+m.ops.checked:''}${m.ops&&m.ops.last_backup?'<br>最近备份 '+m.ops.last_backup:''}</div></div></div>
  ${tokenCard(m)}
  <div class="card"><b>近 14 天对话量</b><div class="trend">${bars}</div></div>`;}
+/* ---------- 冷启动验证面板:激活/留存/使用深度/自来水/解析质量 ---------- */
+async function loadInsight(){let d;try{d=await j('/api/admin/insight');}catch(e){return;}
+ if(d.detail){$('#insight').innerHTML='';return;}
+ const pc=v=>v==null?'<span class="muted">—</span>':(Math.round(v*1000)/10)+'%';
+ const a=d.activation;
+ const rows=d.retention.map(c=>`<tr style="border-top:1px solid #f0efe6"><td style="padding:6px 8px">${c.day}</td><td style="padding:6px 8px;text-align:right">${c.new||0}</td><td style="padding:6px 8px;text-align:right">${pc(c.d1)}</td><td style="padding:6px 8px;text-align:right">${pc(c.d3)}</td><td style="padding:6px 8px;text-align:right">${pc(c.d7)}</td></tr>`).join('');
+ const rankBars=(list)=>{const mx=Math.max(1,...list.map(x=>x.n));return list.length?list.map(x=>`<div style="display:flex;align-items:center;gap:8px;margin-top:5px;font-size:12px"><span style="width:88px;flex:none;text-align:right;color:#555">${esc(x.qtype)}</span><div class="bar" style="flex:1"><i style="width:${x.n/mx*100}%"></i></div><b style="width:38px;text-align:right">${x.n}</b></div>`).join(''):'<div class="muted" style="font-size:12px">暂无</div>';};
+ const srcMx=Math.max(1,...d.sources.map(s=>s.n));
+ const srcBars=d.sources.length?d.sources.map(s=>`<div style="display:flex;align-items:center;gap:8px;margin-top:5px;font-size:12px"><span style="width:88px;flex:none;text-align:right;color:#555">${esc(s.source)}</span><div class="bar" style="flex:1"><i style="width:${s.n/srcMx*100}%"></i></div><b style="width:38px;text-align:right">${s.n}</b></div>`).join(''):'<div class="muted" style="font-size:12px">暂无渠道数据(分享/投放链接带 ?from=渠道名 即可统计)</div>';
+ const q=d.quality,ds=q.dist,tot=q.total||1;
+ const distBar=`<div style="display:flex;height:22px;border-radius:6px;overflow:hidden;font-size:11px;color:#fff;margin-top:6px">
+   <div style="width:${ds.useful/tot*100}%;background:var(--green);display:flex;align-items:center;justify-content:center" title="有用 ${ds.useful}">${ds.useful||''}</div>
+   <div style="width:${ds.useless/tot*100}%;background:var(--orange);display:flex;align-items:center;justify-content:center" title="没用 ${ds.useless}">${ds.useless||''}</div>
+   <div style="width:${ds.error/tot*100}%;background:var(--bad);display:flex;align-items:center;justify-content:center" title="报错 ${ds.error}">${ds.error||''}</div></div>`;
+ const brate=q.bad_rate.length?q.bad_rate.map(r=>`<div style="display:flex;align-items:center;gap:8px;margin-top:5px;font-size:12px"><span style="width:88px;flex:none;text-align:right;color:#555">${esc(r.qtype)}</span><div class="bar" style="flex:1"><i style="width:${r.rate*100}%;background:var(--bad)"></i></div><b style="width:70px;text-align:right">${Math.round(r.rate*100)}% <span class="muted">${r.bad}/${r.total}</span></b></div>`).join(''):'<div class="muted" style="font-size:12px">暂无反馈数据</div>';
+ const badList=q.bad_list.length?q.bad_list.map(b=>`<tr style="border-top:1px solid #f0efe6"><td style="padding:6px 8px;white-space:nowrap"><span class="tag">${esc(b.qtype)}</span> #${b.qid}</td><td style="padding:6px 8px">${esc(b.preview)}…</td><td style="padding:6px 8px;text-align:center"><b style="color:var(--bad)">×${b.flags}</b></td><td style="padding:6px 8px;color:var(--muted);font-size:12px">${b.note?(b.note_kind==='error'?'⚠️ ':'👎 ')+esc(b.note):''}</td></tr>`).join(''):'<tr><td colspan="4" class="muted center" style="padding:12px">暂无被标记的解析 🎉</td></tr>';
+ $('#insight').innerHTML=`
+ <div class="card"><b>冷启动验证</b> <span class="muted" style="font-size:12px">有没有人愿意用 · 用了还回不回来 · AI 解析靠不靠谱</span>
+  <div class="grid g4" style="margin-top:12px">
+   <div class="stat"><div class="n ${a.rate>=0.5?'ok':(a.rate>=0.3?'gold':'bad')}">${pc(a.rate)}</div><div class="l">激活率(做过≥1题)</div></div>
+   <div class="stat"><div class="n">${a.activated}/${a.total}</div><div class="l">已激活 / 注册</div></div>
+   <div class="stat"><div class="n ${a.never>0?'gold':''}">${a.never}</div><div class="l">注册但从未做题(流失预警)</div></div>
+   <div class="stat"><div class="n blue">${d.depth.per_user_q}</div><div class="l">人均做题 · 人均解析 ${d.depth.per_user_e}</div></div></div></div>
+ <div class="grid g2">
+  <div class="card"><b>留存 cohort</b> <span class="muted" style="font-size:12px">近14天每日新增的回访率(— = 窗口未到)</span>
+   <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:8px"><thead><tr style="color:var(--muted);font-size:12px">
+    <td style="padding:4px 8px">注册日</td><td style="padding:4px 8px;text-align:right">新增</td><td style="padding:4px 8px;text-align:right">次日</td><td style="padding:4px 8px;text-align:right">3日</td><td style="padding:4px 8px;text-align:right">7日</td></tr></thead><tbody>${rows}</tbody></table></div>
+  <div class="card"><b>自来水渠道</b> <span class="muted" style="font-size:12px">按注册来源 users.source</span>
+   <div style="margin-top:8px">${srcBars}</div>
+   <div style="margin-top:14px"><b style="font-size:13px">题型做题量 Top</b>${rankBars(d.depth.q_rank)}</div></div></div>
+ <div class="card"><b>AI 解析质量监控</b> <span class="muted" style="font-size:12px">解析是核心交付物,也是最易错处——盯紧没用率</span>
+  <div class="grid g2" style="margin-top:10px">
+   <div><div class="muted" style="font-size:12px">反馈分布(有用 / 没用 / 报错),共 ${q.total} 条</div>${distBar}
+    <div style="font-size:11px;color:var(--muted);margin-top:5px"><span style="color:var(--green)">■</span>有用 ${ds.useful} · <span style="color:var(--orange)">■</span>没用 ${ds.useless} · <span style="color:var(--bad)">■</span>报错 ${ds.error}</div>
+    <div style="margin-top:12px"><b style="font-size:13px">解析触发量 Top(哪些题型最被需要)</b>${rankBars(d.depth.e_rank)}</div></div>
+   <div><div class="muted" style="font-size:12px">各题型「没用率」(优先优化对应方法论知识库)</div><div style="margin-top:6px">${brate}</div></div></div>
+  <div style="margin-top:14px"><b style="font-size:13px">⭐ 被标记没用/报错的解析(金矿:发现产品薄弱点,可点进优化)</b>
+   <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:8px"><thead><tr style="color:var(--muted);font-size:12px">
+    <td style="padding:4px 8px">题型/编号</td><td style="padding:4px 8px">题面</td><td style="padding:4px 8px;text-align:center">标记数</td><td style="padding:4px 8px">最近反馈</td></tr></thead><tbody>${badList}</tbody></table></div></div>`;}
 /* Token 分账卡:钱花在哪个用途、哪个渠道(今日/累计切换) */
 let TOK_SCOPE='today';
 function tokRows(list){
