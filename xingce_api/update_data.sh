@@ -39,8 +39,8 @@ echo ">> 使用 Python: $PY"
 echo ">> 导入公共题(整库替换:清空旧公共题后导入新种子;用户私有题不动)"
 "$PY" import_public.py seed --replace
 
-echo ">> 用本机 embedding 重建全部向量"
-"$PY" reembed.py
+echo ">> 用本机 embedding 重建全部向量(批量 add;逐条 upsert 会让 chromadb 重启后检索失效)"
+"$PY" rebuild_vectors_batch.py
 
 echo ">> 重启服务"
 sudo systemctl restart xingce
