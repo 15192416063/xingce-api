@@ -154,7 +154,9 @@ svg.i{vertical-align:-3px;flex-shrink:0}
 .cta-sec{margin:0 5vw 70px;padding:58px 8vw;text-align:center;background:var(--green-d);color:#e9efe9;border-radius:20px}
 .cta-sec h2{font-family:var(--serif);font-size:clamp(23px,3.2vw,33px);margin:0 0 12px;letter-spacing:.05em}
 .cta-sec p{opacity:.78;margin:0 0 28px;font-size:14px}
-.lp-foot{text-align:center;color:var(--muted);font-size:12px;padding:0 0 36px;letter-spacing:.1em}
+.lp-foot{text-align:center;color:var(--muted);font-size:12px;padding:0 0 36px;letter-spacing:.1em;line-height:2}
+.lp-foot .beian{color:var(--muted);text-decoration:none}
+.lp-foot .beian:hover{text-decoration:underline}
 
 /* 登录弹窗 */
 .modal-mask{position:fixed;inset:0;background:rgba(28,40,32,.45);backdrop-filter:blur(4px);
@@ -471,7 +473,9 @@ input:focus,select:focus{border-color:var(--green)}
    <p>所有功能开放 · 注册即用</p>
    <button class="btn cta big" onclick="openAuth('register')">注册</button>
  </section>
- <div class="lp-foot">行测智能题库 · 祝你早日上岸</div>
+ <div class="lp-foot">行测智能题库 · 祝你早日上岸
+   <br><a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener" class="beian">鲁ICP备2026034113号</a>
+ </div>
 </div>
 
 <!-- 登录/注册弹窗 -->
