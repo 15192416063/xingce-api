@@ -408,6 +408,11 @@ input:focus,select:focus{border-color:var(--green)}
  .main{padding:12px 10px 84px}
  .cdown .right{display:none}
 }
+/* ===== 在线人数·右上角浮标(对外展示火爆,真实数仅管理员可见) ===== */
+.online-fake{position:fixed;top:12px;right:14px;z-index:40;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:5px 12px 5px 10px;font-size:12.5px;color:var(--green-d);font-weight:600;box-shadow:0 6px 18px -8px rgba(15,110,86,.35);display:flex;align-items:center;gap:6px}
+.online-fake .dot{width:7px;height:7px;border-radius:50%;background:#22c55e;animation:onpulse 1.6s infinite}
+@keyframes onpulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.5)}70%{box-shadow:0 0 0 6px rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}
+@media(max-width:760px){.online-fake{top:8px;right:8px;font-size:11.5px;padding:4px 10px 4px 8px}}
 /* ===== AI 助教 · 思维引导页 ===== */
 .tutor{max-width:760px;margin:0 auto}
 .tutor-hd{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:14px}
@@ -549,6 +554,7 @@ input:focus,select:focus{border-color:var(--green)}
    </div>
  </aside>
  <main class="main" id="main"></main>
+ <div id="online-fake" class="online-fake"></div>
  <nav class="tabbar" id="tabbar"></nav>
  <div class="msheet-mask" id="msheetmask" onclick="hideSheet()"></div>
  <div class="msheet" id="msheet"></div>
@@ -694,13 +700,21 @@ async function boot(){
  const h=(location.hash||'').slice(1);
  go(V[h]&&(h!=='admin'||USER.role===1)?h:'home');
 }
-/* 在线人数心跳 */
-let HB=null;
-async function pollOnline(){try{const r=await j('/api/online');
- const el=$('#online-side');if(el)el.innerHTML=`${r.online} 人在线刷题`;
- const p=$('#online-pill');if(p)p.textContent=`${r.online} 人在线`;}catch(e){}}
+/* 在线人数:对外只显示「火爆」的虚拟在线(90-100 随机跳动,右上角浮标);
+   真实在线仅管理员可见(左下角侧栏)。/api/online 仍照常调——它兼作心跳,真实统计不受影响。 */
+let HB=null,FK=null,FAKE_ON=90+Math.floor(Math.random()*11);
+function renderFakeOnline(){const f=$('#online-fake');if(f)f.innerHTML=`<i class="dot"></i>${FAKE_ON} 人在线刷题`;
+ const p=$('#online-pill');if(p)p.textContent=`${FAKE_ON} 人在线`;}
+function fakeOnlineTick(){FAKE_ON+=Math.round((Math.random()-0.5)*5);   // ±2 随机游走,看起来在跳
+ if(FAKE_ON<90)FAKE_ON=90+Math.floor(Math.random()*2);
+ if(FAKE_ON>100)FAKE_ON=99-Math.floor(Math.random()*2);
+ renderFakeOnline();}
+async function pollOnline(){try{const r=await j('/api/online');   // 调用即心跳;真实数只给管理员看
+ const el=$('#online-side');if(el)el.innerHTML=(USER&&USER.role===1)?`真实在线 <b>${r.online}</b> 人`:'';
+ }catch(e){}}
 let DWELL=null;
 function startHeartbeat(){if(HB)clearInterval(HB);pollOnline();HB=setInterval(pollOnline,90000);
+ renderFakeOnline();if(FK)clearInterval(FK);FK=setInterval(fakeOnlineTick,2600+Math.floor(Math.random()*1600));
  if(DWELL)clearInterval(DWELL);
  // 停留时长心跳:页面可见时每 30s 上报一次(后端累计;离开页面不计)
  DWELL=setInterval(()=>{if(TOKEN&&document.visibilityState==='visible')
@@ -1137,7 +1151,7 @@ V.home=async()=>{let s={},papers={count:0,items:[]},mine={count:0,by_category:{}
    <div><div class="dn">${s.exam_days_left!=null?s.exam_days_left:'—'}<small>天</small></div>
     <div class="lb">距 ${s.exam_name||'目标考试'}</div></div>
    <div class="right">今日 <b>${s.today_count||0}</b>/${goal} 题 · 连续 <b>${s.streak||0}</b> 天<br>
-    <span id="online-pill">${s.online||1} 人在线</span> · ${rk.name||'萌新上路'}</div></div>`;
+    <span id="online-pill">${(typeof FAKE_ON!=='undefined'?FAKE_ON:96)} 人在线</span> · ${rk.name||'萌新上路'}</div></div>`;
  const goalbar=`<div style="margin:2px 0 10px"><div class="cap" style="margin:0"><i style="width:${gp}%;background:${gd>=goal?'var(--ok)':'var(--orange)'}"></i></div></div>
   <div style="display:flex;gap:6px;flex-wrap:wrap">
    ${s.due_review?`<span class="chip" style="border-color:var(--bad);color:var(--bad)" onclick="WRONG_DUE=1;go('wrong')">今日待复习 ${s.due_review} 题 →</span>`:''}

@@ -286,9 +286,52 @@ def assemble_steps(system_prompt, methods, question):
     return system_prompt, blocks
 
 
+def _balanced_objects(s):
+    """从一段(可能被截断的)文本里,按花括号配平扫出所有完整的 {...} 对象,
+    字符串内的 { } 和转义不计数。能从「半截 JSON」里救回已写完的那几个 step 对象。"""
+    objs, depth, start, instr, esc = [], 0, -1, False, False
+    for i, ch in enumerate(s):
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            esc = True
+            continue
+        if ch == '"':
+            instr = not instr
+            continue
+        if instr:
+            continue
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}" and depth > 0:
+            depth -= 1
+            if depth == 0 and start >= 0:
+                objs.append(s[start:i + 1])
+    return objs
+
+
+def _salvage_steps(txt):
+    """整体 json 解析失败时(常因视觉模型把长 JSON 截断)抢救:定位 "steps":[ 后,
+    在数组区间里逐个配平扫出已写完的 step 对象。返回 [dict] 或 []。"""
+    m = re.search(r'"steps"\s*:\s*\[', txt)
+    arr = txt[m.end():] if m else txt
+    out = []
+    for o in _balanced_objects(arr):
+        try:
+            d = json.loads(o)
+        except Exception:
+            continue
+        if isinstance(d, dict) and (d.get("body") or d.get("title")):
+            out.append(d)
+    return out
+
+
 def _parse_steps(raw, id2label):
     """把模型输出解析成 steps[]:{tag,title,body,point_id,point_label}。
-    解析失败兜底为单步(整段当一步),保证前端永远有内容。"""
+    多级兜底:整体 json → 贪婪 {…} → 截断抢救;全失败给友好提示(绝不把生 JSON 倒给用户)。"""
     txt = (raw or "").replace("```json", "").replace("```", "").strip()
     data = None
     try:
@@ -305,6 +348,8 @@ def _parse_steps(raw, id2label):
         raw_steps = data.get("steps")
     elif isinstance(data, list):
         raw_steps = data
+    if not (isinstance(raw_steps, list) and raw_steps):
+        raw_steps = _salvage_steps(txt)        # 截断/半截 JSON 抢救
     valid = list(id2label.keys())
     steps = []
     if isinstance(raw_steps, list):
@@ -324,9 +369,13 @@ def _parse_steps(raw, id2label):
                           "point_label": id2label.get(pid, "")})
     if not steps:
         pid = valid[0] if valid else ""
-        steps = [{"tag": "思路", "title": "思路拆解",
-                  "body": (txt or "(生成失败,请重试)")[:1500],
-                  "point_id": pid, "point_label": id2label.get(pid, "")}]
+        # 抢救不出来:若残文是 JSON 残片就别倒给用户(那正是之前满屏生 JSON 的 bug),给友好提示;
+        # 若是普通文字(模型没按 JSON 输出),就把它当一步正常显示。
+        looks_json = txt.lstrip().startswith("{") or '"steps"' in txt or '"body"' in txt
+        body = ("这道题的引导没生成好(可能太长被截断)。点下方「重新生成引导」再试一次。"
+                if looks_json or not txt else txt[:1500])
+        steps = [{"tag": "提示", "title": "引导生成异常",
+                  "body": body, "point_id": pid, "point_label": id2label.get(pid, "")}]
     return steps
 
 

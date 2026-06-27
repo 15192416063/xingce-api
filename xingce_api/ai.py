@@ -103,7 +103,8 @@ def guidance_complete(system_text: str, user_blocks, images=None,
     本题带图(图形推理/资料分析图表)且有视觉渠道时【读图】生成,否则纯文字;
     复用多渠道故障切换 + token 分账。"""
     user_text = "\n\n".join(b for b in user_blocks if b)
-    return _complete(system_text, user_text, images, scene).strip()
+    # 分步 JSON 较长,视觉路径给足额度,避免被 1600 截断成解析不了的半截 JSON
+    return _complete(system_text, user_text, images, scene, max_tokens=3000).strip()
 
 
 def _has_vision() -> bool:
@@ -170,11 +171,13 @@ def _vision_chat(system_text: str, user_text: str, image_paths=None,
     raise RuntimeError(f"视觉渠道不可用:{last_err}")
 
 
-def _complete(sys_text: str, user_text: str, images, scene: str) -> str:
-    """统一出口:本题带图且有视觉模型 → 读图解析;否则/失败 → 纯文字解析。"""
+def _complete(sys_text: str, user_text: str, images, scene: str,
+              max_tokens: int = 1600) -> str:
+    """统一出口:本题带图且有视觉模型 → 读图解析;否则/失败 → 纯文字解析。
+    max_tokens 给视觉路径用(分步 JSON 较长,调用方可调大,避免被截断成废 JSON)。"""
     if images and _has_vision():
         try:
-            return _vision_chat(sys_text, user_text, images, scene)
+            return _vision_chat(sys_text, user_text, images, scene, max_tokens=max_tokens)
         except Exception:
             pass   # 视觉失败绝不能让解析整体挂掉 → 回退纯文字
     msgs = ([("system", sys_text)] if sys_text else []) + [("human", user_text)]
