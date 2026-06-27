@@ -423,6 +423,18 @@ class StuckRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class GuidanceCache(Base):
+    """AI 引导分步结果缓存(按题共享,像解析一样全员复用):同一题秒出且每次一致,
+    省 token。steps 存 JSON;质量不好时可「重新生成」覆盖本行。"""
+    __tablename__ = "guidance_cache"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    question_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    steps_json: Mapped[str] = mapped_column(Text, default="")        # [{tag,title,body,point_id,point_label}]
+    method_ids: Mapped[str] = mapped_column(String(255), default="")
+    guard_triggered: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 def _migrate():
     """轻量自动迁移(SQLite):给已存在的表补上模型新增的列,避免旧库缺列报错。
     生产用 MySQL 时请改用正式迁移工具(Alembic)。"""

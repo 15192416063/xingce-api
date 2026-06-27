@@ -472,7 +472,7 @@ input:focus,select:focus{border-color:var(--green)}
    <div class="hero-l">
      <div class="rv"><span class="kicker"><span class="dot"></span>公务员考试 · 行测备考</span></div>
      <h1 class="rv d1">把每一套真题<br>刷成<em>上岸的底气</em></h1>
-     <p class="sub rv d2">上传行测真题 PDF,AI 自动切题、分类、抠图,变成你的私人题库。想练什么直接说,整卷限时模考,错题自动安排复习——备考路上的脏活累活,都交给它。</p>
+     <p class="sub rv d2">AI 不直接给答案,而是像高手一样带你一步步把每道题想透:判型、定方法、逐步拆解,卡住随时追问。海量真题任选,整卷限时模考,错题自动安排复习。</p>
      <div class="hero-cta rv d3">
        <button class="btn cta big" onclick="openAuth('register')">开始备考</button>
        <button class="btn big ghost" onclick="scrollToSec('flow')">看看怎么用</button>
@@ -503,12 +503,12 @@ input:focus,select:focus{border-color:var(--green)}
  </section>
 
  <section class="flow-sec" id="flow">
-   <h2 class="sec-h rv">三步,把纸质真题变成智能题库</h2>
-   <p class="sec-sub rv">不需要任何手工整理</p>
+   <h2 class="sec-h rv">三步,AI 带你把每道题想透</h2>
+   <p class="sec-sub rv">不直接给答案,练的是思路</p>
    <div class="flow">
-     <div class="fstep rv"><div class="num">1</div><h4>上传 PDF</h4><p>任意行测真题、模拟卷 PDF 直接传,几分钟解析完。</p></div>
-     <div class="fstep rv d1"><div class="num">2</div><h4>AI 切题入库</h4><p>逐题拆分、识别题型考点、抠出配图,一份 PDF 就是一套卷。</p></div>
-     <div class="fstep rv d2"><div class="num">3</div><h4>对话刷题</h4><p>想练什么直接说;整卷可限时模考,错题自动安排复习。</p></div>
+     <div class="fstep rv"><div class="num">1</div><h4>挑一道题</h4><p>海量行测真题随便选,或直接跟 AI 说想练什么。</p></div>
+     <div class="fstep rv d1"><div class="num">2</div><h4>AI 分步引导</h4><p>「一个高手会怎么想」逐步拆解,卡住了随时追问,不直接给答案。</p></div>
+     <div class="fstep rv d2"><div class="num">3</div><h4>自己作答核对</h4><p>走完引导再作答;整卷可限时模考,错题自动安排复习。</p></div>
    </div>
  </section>
 
@@ -607,8 +607,8 @@ const ic=(n,s=17)=>`<svg class="i" width="${s}" height="${s}" viewBox="0 0 24 24
 
 /* ---------- 落地页 ---------- */
 const FEATS=[
- ['doc','PDF 智能入库','上传真题 PDF,AI 自动切题、判断题型、提炼考点;图形推理精确抠图,资料分析整组关联材料。'],
- ['chat','对话式调题','「来几道图形推理」「行程问题怎么秒解」——直接说,优先从你上传的题里调,不够再从公共库补。'],
+ ['spark','AI 思维引导','不直接给答案——AI 像高手一样带你判型、定方法、逐步拆解,卡住能追问,练的是举一反三的思路。'],
+ ['chat','对话式调题','「来几道图形推理」「行程问题怎么秒解」——直接说,系统从真题库即时调取对应的题。'],
  ['timer','整卷限时模考','任意一套卷开启限时模考,交卷出分,分模块正确率与用时报告。行测的本质,是时间管理。'],
  ['book','错题间隔复习','错题自动归集,按 1/3/7/15 天安排复习,做对一档进一档,四档全过自动掌握。'],
  ['chart','考点掌握图谱','每个细分考点的题量、已做、正确率一目了然,低于 60% 自动标红,点击直接去练。'],
@@ -858,8 +858,9 @@ async function tutorView(){const id=TUTOR_QID;setTimeout(()=>loadTutor(id),0);
    <div class="tutor-hd"><h1>${ic('spark',20)} AI 助教 · 思维引导</h1><span class="sub">不直接给答案,带你一步步想清楚</span></div>
    <div id="tutorwrap"><div class="card muted center" style="padding:40px">正在为你拆解高手思路… <span class="muted">(首次约 3~10 秒)</span></div></div>
  </div>`;};
-async function loadTutor(id){const wrap=$('#tutorwrap');if(!wrap)return;
- let r;try{r=await j('/api/questions/'+id+'/guidance',{method:'POST'});}
+async function loadTutor(id,force){const wrap=$('#tutorwrap');if(!wrap)return;
+ if(force)wrap.innerHTML='<div class="card muted center" style="padding:40px">重新生成引导中… <span class="muted">(约 3~10 秒)</span></div>';
+ let r;try{r=await j('/api/questions/'+id+'/guidance'+(force?'?force=1':''),{method:'POST'});}
  catch(e){wrap.innerHTML='<div class="card">生成失败,请重试:'+esc(''+e)+'</div>';return;}
  if(r.detail){wrap.innerHTML='<div class="card">'+esc(r.detail)+'</div>';return;}
  TUTOR={qid:id,q:r.question||{},steps:r.steps||[],presets:r.stuck_presets||[],unlocked:1,curStep:0,pick:''};
@@ -886,6 +887,7 @@ function renderTutor(){const wrap=$('#tutorwrap');if(!wrap||!TUTOR)return;
  else h+=ansboxHTML();
  h+='<div id="stuckarea"></div>';
  h+=`<div class="tsecondary"><div class="lab">想做点别的?</div><div class="row">
+   <button class="btn sm ghost" onclick="loadTutor(TUTOR.qid,true)">${ic('spark',14)} 重新生成引导</button>
    <button class="btn sm ghost" onclick="tutorAnother()">${ic('spark',14)} 换一道题</button>
    <button class="btn sm ghost" onclick="tutorSimilar()">${ic('search',14)} 找相似</button>
    <button class="btn sm ghost" onclick="go('practice')">${ic('chart',14)} 题型刷题</button></div></div>`;
@@ -1164,7 +1166,7 @@ V.home=async()=>{let s={},papers={count:0,items:[]},mine={count:0,by_category:{}
   <div class="proj-main">
    ${cdown}
    <div style="margin:2px 0 12px"><div class="serif" style="font-size:24px;font-weight:700">${greet},今天也要上岸。</div>
-    <div class="muted" style="margin-top:6px;font-size:13px">上传 PDF 攒题库,想练什么直接说。</div></div>
+    <div class="muted" style="margin-top:6px;font-size:13px">想练什么直接跟 AI 说,它带你一步步想透。</div></div>
    ${nudgeBar}
    ${goalbar}
    <div class="hcard" style="margin-top:12px">
@@ -1319,7 +1321,7 @@ async function aiSaveMine(){const inp=$('#chatin');const c=(inp?inp.value:'').tr
 /* ---------- 考点掌握 ---------- */
 function accColor(a){return a==null?'#bbb':a<60?'var(--bad)':a<80?'var(--orange)':'var(--ok)';}
 V.tree=async()=>{const r=await j('/api/category/tree');
- if(!r.items||!r.items.length)return `<h2 class="page">考点掌握</h2><div class="card empty"><div class="e">${ic('chart',40)}</div>题库还是空的,先上传一份 PDF</div>`;
+ if(!r.items||!r.items.length)return `<h2 class="page">考点掌握</h2><div class="card empty"><div class="e">${ic('chart',40)}</div>题库还在准备中,稍后再来看看</div>`;
  const cards=r.items.map(m=>{
   const macc=m.accuracy==null?'—':m.accuracy+'%';
   const rows=m.children.map(t=>{
@@ -1366,7 +1368,7 @@ async function loadQuiz(){const lim=$('#lim')?$('#lim').value:5;
  if(WEAK_NEXT){WEAK_NEXT=false;return loadWeak();}
  const box=$('#quiz');box.innerHTML='<div class="skel"></div><div class="skel" style="animation-delay:.1s"></div>';
  const r=await j(`/api/practice/questions?l1=${encodeURIComponent(SEL.l1)}&l2=${encodeURIComponent(SEL.l2)}&kp=${encodeURIComponent(SEL.kp||'')}&limit=${lim}&exclude_done=false`);
- if(!r.count){box.innerHTML=`<div class="card empty"><div class="e">${ic('doc',40)}</div>该题型暂无可练的题<br><span style="font-size:12px">在首页上传 PDF 即可快速攒题</span></div>`;return;}
+ if(!r.count){box.innerHTML=`<div class="card empty"><div class="e">${ic('doc',40)}</div>该题型暂无可练的题<br><span style="font-size:12px">换个题型试试</span></div>`;return;}
  box.innerHTML='<div class="qlist">'+r.items.map(q=>qCard(q,{answer:true})).join('')+'</div>';QT.last=Date.now();}
 
 /* ---------- 套卷详情(从首页「我的题库」点入) ---------- */

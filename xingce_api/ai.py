@@ -97,12 +97,13 @@ def _invoke(messages, scene="其他"):
     raise RuntimeError(f"所有 AI 渠道均不可用,最后错误:{last_err}")
 
 
-def guidance_complete(system_text: str, user_blocks, scene: str = "AI引导") -> str:
-    """引导式思维拆解的 LLM 出口:守护层走 system 角色,其余(方法论/画像/题目)
-    按调用方给定顺序各自走 user 角色;复用多渠道故障切换 + token 分账。"""
-    msgs = ([("system", system_text)] if system_text else [])
-    msgs += [("human", b) for b in user_blocks if b]
-    return _invoke(msgs, scene).strip()
+def guidance_complete(system_text: str, user_blocks, images=None,
+                      scene: str = "AI引导") -> str:
+    """引导式思维拆解的 LLM 出口:守护层走 system 角色,方法论/题目等合并走 user。
+    本题带图(图形推理/资料分析图表)且有视觉渠道时【读图】生成,否则纯文字;
+    复用多渠道故障切换 + token 分账。"""
+    user_text = "\n\n".join(b for b in user_blocks if b)
+    return _complete(system_text, user_text, images, scene).strip()
 
 
 def _has_vision() -> bool:
@@ -701,7 +702,10 @@ def chat(message: str, history=None) -> str:
                         "重要:绝不要在回复里自己编写、列出或罗列完整的练习题或选项"
                         "(A/B/C/D 等)。当用户想做题时,系统会自动从真实题库调取带图真题"
                         "展示在你的回复下方;你只需用一两句话说明将为他推荐哪类题、"
-                        "提示考点或方法即可,把题目本身交给系统展示。"}]
+                        "提示考点或方法即可,把题目本身交给系统展示。\n"
+                        "注意:本系统题库由平台统一维护,**普通用户不能上传 PDF 或题目**。"
+                        "若用户问怎么上传题/传 PDF/导入真题,直接告诉他题库已由平台准备好、"
+                        "想练什么直接说即可,**绝不要给出任何上传/导入的操作步骤**。"}]
     # 历史只带最近4条、每条截600字——再多对答疑帮助很小,token 白烧
     for h in (history or [])[-4:]:
         if h.get("role") in ("user", "assistant") and h.get("content"):
@@ -758,6 +762,8 @@ def chat_reco(message: str, history=None, profile: str = "", learning: str = "")
         "· 学生在**问方法/考点/概念**时,把'为什么'讲透,分点、可到 500 字;\n"
         "· 学生**要题/练习**时,只简短一两句说明给TA推荐哪类题(题目由系统从真题库调取),"
         "**绝不要自己编题或列 A/B/C/D 选项**。\n"
+        "· 本系统题库由平台统一维护,**普通用户不能上传 PDF/题目**;学生问怎么上传题/传 PDF 时,"
+        "就说题库已备好、想练什么直接说即可,**绝不要给上传或导入步骤**。\n"
         "【只输出】下面这个 JSON,不要输出任何其它文字:\n"
         '{"reply":"给学生的话","want":true/false,"l1":"一级题型或空","l2":"二级题型或空","summary":"题型-考点检索摘要或空"}'
     )

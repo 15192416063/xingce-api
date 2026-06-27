@@ -757,13 +757,15 @@ def question_ask(qid: int, payload: dict = Body(...),
 
 
 @app.post("/api/questions/{qid}/guidance")
-def question_guidance(qid: int, u: User = Depends(auth.current_user)):
-    """AI 助教 · 分步引导:检索方法论 → 注入守护层 → 生成 steps[](不直接给答案)。
+def question_guidance(qid: int, force: int = 0, u: User = Depends(auth.current_user)):
+    """AI 助教 · 分步引导:检索方法论 → 读图 + 答案锚点 → 生成 steps[](不直接给答案)。
     业务在 guidance.generate_guidance;路由额外带上题目展示 VO(题干/题型/图,不含答案),
-    供助教页一次拉全所需数据。"""
-    _ai_guard(u)
+    供助教页一次拉全所需数据。force=1 重新生成;命中缓存不计入每日 AI 配额。"""
+    will_generate = bool(force) or not guidance.is_cached(qid)
+    if will_generate:
+        _ai_guard(u)
     try:
-        r = guidance.generate_guidance(str(qid), u.id)
+        r = guidance.generate_guidance(str(qid), u.id, force=bool(force))
     except ValueError as e:
         raise HTTPException(404, str(e))
     db = SessionLocal()

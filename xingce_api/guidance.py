@@ -7,16 +7,18 @@
 分层约定:本模块不依赖 FastAPI,只调数据层(取题/取画像/向量检索)与 ai 出口,
         HarmonyOS / 小程序端可直接复用,无需重写。
 """
+import os
 import re
 import json
 import logging
 
+import config
 import ai
 import method_kb
 import method_vectors
 import stuck_presets
-from db import (SessionLocal, Question, MaterialGroup, UserMemory,
-                GuidanceLog, StuckRecord)
+from db import (SessionLocal, Question, QuestionImage, MaterialGroup, UserMemory,
+                GuidanceLog, GuidanceCache, StuckRecord)
 
 _logger = logging.getLogger("xc")
 
@@ -36,12 +38,34 @@ _LEAK_PATTERNS = [
     re.compile(r"(本题|此题|该题)\s*[^。\n]{0,6}选\s*[ABCD]"),
     re.compile(r"选\s*[ABCD]\s*项"),
     re.compile(r"答案\s*为?\s*[ABCD](?![a-zA-Z])"),
+    re.compile(r"只有\s*[ABCD][^。\n]{0,4}(符合|满足|正确|对|可以|是它)"),
+    re.compile(r"[ABCD]\s*选项[^。\n]{0,6}(符合|正确|满足|就是)"),
 ]
 
 
 # ---------- 数据层:取题 / 取画像 / 落日志 ----------
+def _question_images(db, q):
+    """收集本题相关图的【绝对路径】:资料分析材料组图表 + 本题自身图(图形题/选项图)。
+    供视觉模型读图——图形推理这类纯图题不读图,引导必然和题目脱节。文件不存在的跳过。"""
+    rels = []
+    if q.material_id:
+        mg = db.get(MaterialGroup, q.material_id)
+        if mg and mg.image_keys:
+            rels += [k for k in mg.image_keys.split("|") if k]
+    for img in db.query(QuestionImage).filter(QuestionImage.question_id == q.id).all():
+        if img.object_key:
+            rels.append(img.object_key)
+    out = []
+    for rel in rels:
+        p = os.path.join(config.IMAGE_DIR, rel)
+        if os.path.exists(p) and p not in out:
+            out.append(p)
+    return out
+
+
 def _load_question(question_id):
-    """从 SQLite 取题:返回 {id, module, question_type, content, material} 或 None。"""
+    """从 SQLite 取题:返回 {id, module, question_type, content, material, answer, images} 或 None。
+    answer=题库官方答案(仅作隐藏锚点保证思路正确,绝不展示);images=题面图绝对路径。"""
     db = SessionLocal()
     try:
         q = db.get(Question, int(question_id))
@@ -53,7 +77,9 @@ def _load_question(question_id):
             material = mg.material_text if mg else ""
         return {"id": q.id, "module": q.category_l1 or "",
                 "question_type": q.category_l2 or "",
-                "content": q.content or "", "material": material}
+                "content": q.content or "", "material": material,
+                "answer": (q.answer or "").strip(),
+                "images": _question_images(db, q)}
     finally:
         db.close()
 
@@ -151,9 +177,66 @@ def _methods_block(methods):
 
 def _question_block(question):
     qb = "【题目】\n" + (question.get("content") or "")
+    if question.get("images"):
+        qb += "\n(本题附有图片,请先看懂图中内容再拆解思路)"
     if question.get("material"):
         qb += "\n\n【材料】\n" + question["material"][:1500]
+    ans = (question.get("answer") or "").strip()
+    if ans:
+        qb += (
+            f"\n\n【标准答案={ans}(题库官方答案,铁定正确;仅你内部参照)】\n"
+            f"硬性要求:你的判型、规律、每一步排查标准都必须跟「正确答案是 {ans}」自洽。"
+            f"若你读图/推规律得到的指向不是 {ans},那一定是你这步想错了或图看错了"
+            f"(图形/立体题尤其容易看错)——请换条规律、重新读图,直到你的方法能让 {ans} 成立;"
+            f"绝不允许把学生导向除 {ans} 以外的任何选项。"
+            f"但全程【不许写出、点破或暗示 {ans}】,也不许对任何选项下「符合/排除/正确」的结论,"
+            f"把「用这个标准逐项核对、锁定答案」这最后一步留给学生自己做。")
     return qb
+
+
+# ---------- 数据层:引导缓存(按题共享,全员复用) ----------
+def _cache_get(qid):
+    db = SessionLocal()
+    try:
+        row = db.query(GuidanceCache).filter(GuidanceCache.question_id == int(qid)).first()
+        if not row or not row.steps_json:
+            return None
+        try:
+            steps = json.loads(row.steps_json)
+        except Exception:
+            return None
+        return {"steps": steps,
+                "method_ids": row.method_ids.split(",") if row.method_ids else [],
+                "guard_triggered": bool(row.guard_triggered)}
+    finally:
+        db.close()
+
+
+def is_cached(question_id):
+    """本题是否已有缓存引导(供接入层决定是否计入每日 AI 配额:命中缓存不该扣额)。"""
+    try:
+        return _cache_get(question_id) is not None
+    except Exception:
+        return False
+
+
+def _cache_put(qid, steps, method_ids, guard_triggered):
+    try:
+        db = SessionLocal()
+        row = db.query(GuidanceCache).filter(GuidanceCache.question_id == int(qid)).first()
+        payload = json.dumps(steps, ensure_ascii=False)
+        if row:
+            row.steps_json = payload
+            row.method_ids = ",".join(method_ids)[:255]
+            row.guard_triggered = 1 if guard_triggered else 0
+        else:
+            db.add(GuidanceCache(question_id=int(qid), steps_json=payload,
+                                 method_ids=",".join(method_ids)[:255],
+                                 guard_triggered=1 if guard_triggered else 0))
+        db.commit()
+        db.close()
+    except Exception:
+        _logger.exception("guidance cache put failed")
 
 
 # 分步输出格式(JSON),拼在题目块之后。让模型把「高手怎么想」拆成递进步骤。
@@ -166,22 +249,40 @@ _STEPS_FORMAT = (
     "要求:\n"
     "- point_id 从【可选方法论ID】里挑**最贴切的一个**,原样填写;\n"
     "- 步骤要递进:判型 → 下手点 → 调用方法 → 逐项排查标准 → 把结论交还学生;\n"
-    "- 最后一步只交还判断,**绝不公布答案或点破选项**;全程不要写「答案是X」「选X」。\n"
+    "- 题目附图时(图形推理/资料分析图表)**必须先看懂图再拆**,讲的内容要紧扣图里实际看到的特征,"
+    "不要泛泛套话、不要和本题无关;\n"
+    "- 「排查」这一步**只讲【按什么标准、怎么逐项验证】**,绝不要替学生数出/算出每个选项的具体数值,"
+    "更不要对 A/B/C/D 任何一项下「符合/排除/就是它」的结论——把动手核对和最终锁定留给学生;\n"
+    "- 全程**绝不公布答案、不点破选项**,不要写「答案是X」「选X」「只有X符合」「问号处应为…所以选…」之类。\n"
     "【可选方法论ID】\n{idlist}"
 )
 
 
-def assemble_steps(system_prompt, methods, profile, question):
-    """组装【分步生成】上下文:守护层(system)→ 方法论 → 画像 → 题目+JSON格式要求(user)。
+# 图形推理纯图题:AI 读图本就不稳,硬让它逐项数图常常数错、反把学生导向错选项。
+# 所以图推只教【判型 + 该数/比什么 + 怎么数】,绝不替学生算每个选项、不下任一结论。
+_TX_EXTRA = (
+    "\n\n⚠️本题是【图形推理】纯图题,AI 读图极易出错。所以你只示范判型与方法:"
+    "讲清该往哪个维度想(数量/位置/样式/属性/空间)、要数什么/比什么、怎么数才不漏不重;"
+    "绝对不要去数出或断言每个选项的具体数值,绝对不要说哪个选项符合/排除/就是它——"
+    "把「具体数每个选项、逐项核对、锁定答案」整个留给学生。最后一步只交还方法,不给任何结论。")
+
+
+def _is_tuxing(question):
+    return "图形" in (question.get("question_type") or "") or \
+           "图形" in (question.get("module") or "")
+
+
+def assemble_steps(system_prompt, methods, question):
+    """组装【分步生成】上下文:守护层(system)→ 方法论 + 题目 + JSON 格式要求(user)。
+    引导按题共享缓存,故不注入个人画像(避免把某个人的学情写进全员复用的引导)。
     返回 (system_text, user_blocks)。"""
     blocks = []
     if methods:
         blocks.append(_methods_block(methods))
-    if profile.strip():
-        blocks.append("【学生能力画像(因材施教,可不必显式提起)】\n" + profile.strip())
     idlist = "\n".join(f"- {m['id']} = {m.get('label', '')}" for m in methods) or "(无)"
+    extra = _TX_EXTRA if _is_tuxing(question) else ""
     blocks.append(_question_block(question) + _NO_LEAK_REMINDER +
-                  _STEPS_FORMAT.replace("{idlist}", idlist))
+                  _STEPS_FORMAT.replace("{idlist}", idlist) + extra)
     return system_prompt, blocks
 
 
@@ -237,21 +338,30 @@ def check_guard(text):
 
 
 # ---------- 业务主入口:分步引导 ----------
-def generate_guidance(question_id, user_id=None):
-    """检索方法论 → 注入守护层 → 带约束生成【分步】引导(steps[])→ 校验 + 落日志。
+def generate_guidance(question_id, user_id=None, force=False):
+    """检索方法论 → 注入守护层 + 题面图(读图)+ 答案锚点 → 生成【分步】引导(steps[])→ 校验。
+    结果按题缓存:同一题秒出且每次一致;force=True 时重新生成并覆盖缓存。
     返回 {question_id, module, question_type, steps, retrieved_methods,
-          guard_triggered, stuck_presets}。题目不存在时抛 ValueError(接入层映射 404)。"""
+          guard_triggered, cached, stuck_presets}。题目不存在抛 ValueError(接入层映射 404)。"""
     q = _load_question(question_id)
     if not q:
         raise ValueError("题目不存在")
+    presets = stuck_presets.presets_for(q["module"], q["question_type"])
+    if not force:
+        hit = _cache_get(q["id"])
+        if hit:
+            return {"question_id": str(q["id"]), "module": q["module"],
+                    "question_type": q["question_type"], "steps": hit["steps"],
+                    "retrieved_methods": hit["method_ids"],
+                    "guard_triggered": hit["guard_triggered"], "cached": True,
+                    "stuck_presets": presets}
     methods = _budget_methods(
         retrieve_methods(q["module"], q["question_type"], q["content"]))
     id2label = {m["id"]: m.get("label", "") for m in methods}
-    profile = _load_profile(user_id)
-    system_text, blocks = assemble_steps(
-        method_kb.guidance_system_prompt(), methods, profile, q)
+    system_text, blocks = assemble_steps(method_kb.guidance_system_prompt(), methods, q)
     try:
-        raw = ai.guidance_complete(system_text, blocks, scene="AI引导")
+        raw = ai.guidance_complete(system_text, blocks, images=q.get("images"),
+                                   scene="AI引导")
     except Exception:
         _logger.exception("guidance generate failed")
         raw = ""
@@ -259,11 +369,12 @@ def generate_guidance(question_id, user_id=None):
     joined = "\n\n".join(s["body"] for s in steps)
     triggered = check_guard(joined)
     method_ids = [m["id"] for m in methods]
+    _cache_put(q["id"], steps, method_ids, triggered)
     _log(q["id"], user_id, joined, method_ids, triggered)
     return {"question_id": str(q["id"]), "module": q["module"],
             "question_type": q["question_type"], "steps": steps,
             "retrieved_methods": method_ids, "guard_triggered": triggered,
-            "stuck_presets": stuck_presets.presets_for(q["module"], q["question_type"])}
+            "cached": False, "stuck_presets": presets}
 
 
 # ---------- 重讲分支:针对具体卡点换说法讲透(用户点「还是没懂」/快捷卡点) ----------
@@ -296,7 +407,7 @@ def explain_stuck(question_id, user_id, step_index, point_id, stuck_point):
                   .replace("{stuck}", (stuck_point or "没看懂这一步").strip()[:500]))
     try:
         body = ai.guidance_complete(method_kb.guidance_system_prompt(), blocks,
-                                    scene="AI引导重讲")[:2500]
+                                    images=q.get("images"), scene="AI引导重讲")[:2500]
     except Exception:
         _logger.exception("explain_stuck failed")
         body = ""
