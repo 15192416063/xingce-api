@@ -393,6 +393,36 @@ class ExplainFeedback(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class GuidanceLog(Base):
+    """AI 引导式思维拆解流水:每次 generate_guidance 记一条(便于排查 + 攒守护层样本)。
+    guard_triggered=1 表示生成文本疑似直接给了答案(守护层被突破),供后续调 prompt 用。"""
+    __tablename__ = "guidance_log"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    question_id: Mapped[int] = mapped_column(Integer, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    retrieved_methods: Mapped[str] = mapped_column(String(255), default="")  # 命中方法论ID,逗号分隔
+    guidance_text: Mapped[str] = mapped_column(Text, default="")
+    guard_triggered: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class StuckRecord(Base):
+    """卡点沉淀(本期只写不读,为将来「卡点→画像→薄弱点推荐」闭环攒数据)。
+    关键是 point_id(知识点类型,能泛化到推荐),而非"第几号题卡过"。"""
+    __tablename__ = "stuck_records"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    question_id: Mapped[int] = mapped_column(Integer, index=True)
+    module: Mapped[str] = mapped_column(String(32), default="", index=True)
+    question_type: Mapped[str] = mapped_column(String(64), default="")
+    point_id: Mapped[str] = mapped_column(String(64), default="", index=True)  # 知识点ID,泛化到推荐的关键
+    point_label: Mapped[str] = mapped_column(String(128), default="")
+    step_index: Mapped[int] = mapped_column(Integer, default=0)
+    source: Mapped[str] = mapped_column(String(16), default="")  # preset / free_text
+    raw_text: Mapped[str] = mapped_column(Text, default="")      # 自由输入原文;预设为空
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 def _migrate():
     """轻量自动迁移(SQLite):给已存在的表补上模型新增的列,避免旧库缺列报错。
     生产用 MySQL 时请改用正式迁移工具(Alembic)。"""

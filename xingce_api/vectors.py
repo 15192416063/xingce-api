@@ -7,9 +7,15 @@ import ai
 
 
 @functools.lru_cache(maxsize=1)
+def _client():
+    """同进程单例 Chroma client(chromadb 不允许同路径多实例)。
+    方法论向量库 method_vectors 复用本 client,只是另开一个 collection。"""
+    return chromadb.PersistentClient(path=config.VECTOR_DIR)
+
+
+@functools.lru_cache(maxsize=1)
 def _collection():
-    client = chromadb.PersistentClient(path=config.VECTOR_DIR)
-    return client.get_or_create_collection("questions")
+    return _client().get_or_create_collection("questions")
 
 
 def upsert(question_id: int, summary: str, scope: str, l2: str):

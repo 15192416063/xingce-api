@@ -97,6 +97,14 @@ def _invoke(messages, scene="其他"):
     raise RuntimeError(f"所有 AI 渠道均不可用,最后错误:{last_err}")
 
 
+def guidance_complete(system_text: str, user_blocks, scene: str = "AI引导") -> str:
+    """引导式思维拆解的 LLM 出口:守护层走 system 角色,其余(方法论/画像/题目)
+    按调用方给定顺序各自走 user 角色;复用多渠道故障切换 + token 分账。"""
+    msgs = ([("system", system_text)] if system_text else [])
+    msgs += [("human", b) for b in user_blocks if b]
+    return _invoke(msgs, scene).strip()
+
+
 def _has_vision() -> bool:
     """是否有可用视觉模型:管理面板配的"支持看图"渠道,或 .env 里的 VISION_KEY。"""
     try:

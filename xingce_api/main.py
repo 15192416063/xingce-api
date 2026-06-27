@@ -20,6 +20,7 @@ from sqlalchemy import func
 import config
 import ingest
 import vectors
+import guidance
 import textutil
 import auth
 import ai
@@ -753,6 +754,48 @@ def question_ask(qid: int, payload: dict = Body(...),
     db.commit()
     db.close()
     return {"reply": reply}
+
+
+@app.post("/api/questions/{qid}/guidance")
+def question_guidance(qid: int, u: User = Depends(auth.current_user)):
+    """AI 助教 · 分步引导:检索方法论 → 注入守护层 → 生成 steps[](不直接给答案)。
+    业务在 guidance.generate_guidance;路由额外带上题目展示 VO(题干/题型/图,不含答案),
+    供助教页一次拉全所需数据。"""
+    _ai_guard(u)
+    try:
+        r = guidance.generate_guidance(str(qid), u.id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    db = SessionLocal()
+    q = db.get(Question, qid)
+    r["question"] = _q_to_vo(q, db, with_answer=False, user_id=u.id) if q else None
+    db.close()
+    return r
+
+
+@app.post("/api/questions/{qid}/stuck")
+def question_stuck(qid: int, payload: dict = Body(...),
+                   u: User = Depends(auth.current_user)):
+    """卡点对话:记录卡点(stuck_records,只写不读)+ 针对该卡点换说法重讲(仍走守护层)。
+    payload: {step_index, point_id, point_label, source:'preset'|'free_text', stuck_point}"""
+    stuck_point = (payload.get("stuck_point") or "").strip()[:500]
+    if not stuck_point:
+        raise HTTPException(400, "请描述你卡在哪里")
+    step_index = int(payload.get("step_index") or 0)
+    point_id = (payload.get("point_id") or "").strip()[:64]
+    point_label = (payload.get("point_label") or "").strip()[:128]
+    source = "preset" if (payload.get("source") == "preset") else "free_text"
+    _ai_guard(u)
+    # 先沉淀卡点(point_id 是泛化到推荐的关键),再换说法重讲
+    guidance.record_stuck(u.id, qid, point_id, point_label, step_index, source,
+                          raw_text="" if source == "preset" else stuck_point)
+    try:
+        r = guidance.explain_stuck(str(qid), u.id, step_index, point_id, stuck_point)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    if not r["body"]:
+        raise HTTPException(422, "重讲生成失败,请重试")
+    return r
 
 
 @app.get("/api/practice/similar/{question_id}")

@@ -408,6 +408,50 @@ input:focus,select:focus{border-color:var(--green)}
  .main{padding:12px 10px 84px}
  .cdown .right{display:none}
 }
+/* ===== AI 助教 · 思维引导页 ===== */
+.tutor{max-width:760px;margin:0 auto}
+.tutor-hd{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.tutor-hd h1{font-size:22px;font-weight:700;color:var(--green-d);margin:0}
+.tutor-hd .sub{font-size:13px;color:var(--muted)}
+.tutor .qbox{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--green);border-radius:12px;padding:16px 18px}
+.tutor .qbox .stem{font-size:15.5px;line-height:1.85;color:var(--ink);margin-top:8px}
+.tutor .qbox img{max-width:100%;margin-top:10px;border-radius:8px;border:1px solid var(--line)}
+.tutor .qbox .mat{background:var(--green-bg);border-radius:8px;padding:10px 12px;font-size:13px;color:#3a4a40;margin-bottom:10px;max-height:200px;overflow:auto}
+.gprog{display:flex;align-items:center;gap:12px;margin:18px 2px 6px}
+.gprog .lab{font-size:13px;color:var(--green-d);font-weight:600;white-space:nowrap}
+.gprog .cap{flex:1;margin:0}
+.gcard{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-top:12px;animation:gcin .35s ease}
+.gcard.dim{opacity:.62}
+@keyframes gcin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.gcard .gtag{display:inline-block;background:var(--green-bg);color:var(--green-d);font-size:12px;font-weight:600;padding:2px 10px;border-radius:20px}
+.gcard .gtitle{font-size:15px;font-weight:700;color:var(--ink);margin:8px 0 2px}
+.gcard .gbody{font-size:14.5px;line-height:1.8;color:#2b322c}
+.gcard .gstuck{margin-top:10px;font-size:12.5px;color:var(--orange);cursor:pointer;display:inline-flex;align-items:center;gap:4px}
+.gcard .gstuck:hover{text-decoration:underline}
+.tnext{display:flex;justify-content:center;margin-top:16px}
+.tnext button{min-width:200px}
+.ansbox{background:var(--card);border:1px dashed var(--green);border-radius:12px;padding:18px;margin-top:18px;text-align:center}
+.ansbox .h{font-weight:700;color:var(--green-d);margin-bottom:14px}
+.circs{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+.circ{width:54px;height:54px;border-radius:50%;border:2px solid var(--line);background:#fff;font-size:20px;font-weight:700;color:var(--ink);cursor:pointer;transition:.15s}
+.circ:hover{border-color:var(--green);color:var(--green)}
+.circ.sel{background:var(--green);color:#fff;border-color:var(--green)}
+.circ.correct{background:var(--ok);color:#fff;border-color:var(--ok)}
+.circ.wrong{background:var(--bad);color:#fff;border-color:var(--bad)}
+.ansact{display:flex;gap:10px;justify-content:center;margin-top:16px;flex-wrap:wrap}
+.stuck{background:#fff8f1;border:1px solid #f0d8c2;border-radius:12px;padding:14px 16px;margin-top:14px}
+.stuck .guardbar{background:#fdeee0;color:#9c5a23;font-size:12.5px;border-radius:8px;padding:8px 12px;margin-bottom:12px;display:flex;align-items:center;gap:6px}
+.stuck .pchips{display:flex;flex-direction:column;gap:8px}
+.stuck .pchip{text-align:left;background:#fff;border:1px solid #ecd9c6;border-radius:10px;padding:9px 12px;font-size:13.5px;color:#5a4632;cursor:pointer;transition:.15s}
+.stuck .pchip:hover{border-color:var(--orange);background:#fffaf4}
+.stuck .pchip b{color:var(--orange);font-weight:600;font-size:12px;margin-right:6px}
+.stuck .sfree{display:flex;gap:8px;margin-top:12px}
+.stuck .sfree input{flex:1;border:1px solid #e2cdb6;border-radius:8px;padding:9px 12px;font-size:14px;background:#fff}
+.stuck .sans{margin-top:12px}
+.stuck .sans .mdbody{background:#fff;border:1px solid #f0e2d2;border-radius:10px;padding:12px 14px;margin-top:8px;font-size:14px;line-height:1.8}
+.tsecondary{margin-top:26px;padding-top:16px;border-top:1px dashed var(--line);text-align:center}
+.tsecondary .lab{font-size:12.5px;color:var(--muted);margin-bottom:8px}
+.tsecondary .row{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
 </style>
 </head>
 <body>
@@ -698,7 +742,8 @@ function qCard(q,opts={}){
    for(const o of list)h+=`<div class="opt" onclick="pickOpt(${q.id},'${o.k}',this)"><b>${o.k}</b><span>${esc(o.t)}</span></div>`;
    h+='</div>';
  }
- h+=`<div class="q-foot"><button class="btn sm ghost" onclick="findSim(${q.id})">${ic('search',14)} 找相似</button>`;
+ h+=`<div class="q-foot"><button class="btn sm ghost" onclick="openTutor(${q.id})">${ic('spark',14)} AI 引导</button>`;
+ h+=`<button class="btn sm ghost" onclick="findSim(${q.id})">${ic('search',14)} 找相似</button>`;
  h+=`<button class="btn sm ghost" onclick="openThread(${q.id})">${ic('chat',14)} 追问这道题</button>`;
  if(opts.master)h+=`<button class="btn sm ok" onclick="masterQ(${q.id})">${ic('check',14)} 已掌握</button>`;
  if(opts.del)h+=`<button class="btn sm bad" onclick="mineDel(${q.id})">移出我的库</button>`;
@@ -804,6 +849,111 @@ async function aiSolve(id,myAns){const res=$('#r'+id);res.className='res info';
  res.innerHTML=`${hit?'与你的作答一致!':'AI 认为答案是 <b>'+r.answer+'</b>'}
   <span class="tag diff">AI 生成,仅供参考${r.cached?' · 已缓存':''}</span>`
   +(r.explanation?'<br>解析:'+renderMD(r.explanation)+fbBar(id,'solve'):'');typeset(res);}
+/* ===== AI 助教 · 思维引导页(分步解锁 + 卡点对话) ===== */
+let TUTOR_QID=0,TUTOR=null;
+function openTutor(id){TUTOR_QID=id;go('tutor');}
+/* 用函数声明(会提升),稍后在 const V 定义后再挂到 V.tutor,避免 TDZ */
+async function tutorView(){const id=TUTOR_QID;setTimeout(()=>loadTutor(id),0);
+ return `<div class="tutor">
+   <div class="tutor-hd"><h1>${ic('spark',20)} AI 助教 · 思维引导</h1><span class="sub">不直接给答案,带你一步步想清楚</span></div>
+   <div id="tutorwrap"><div class="card muted center" style="padding:40px">正在为你拆解高手思路… <span class="muted">(首次约 3~10 秒)</span></div></div>
+ </div>`;};
+async function loadTutor(id){const wrap=$('#tutorwrap');if(!wrap)return;
+ let r;try{r=await j('/api/questions/'+id+'/guidance',{method:'POST'});}
+ catch(e){wrap.innerHTML='<div class="card">生成失败,请重试:'+esc(''+e)+'</div>';return;}
+ if(r.detail){wrap.innerHTML='<div class="card">'+esc(r.detail)+'</div>';return;}
+ TUTOR={qid:id,q:r.question||{},steps:r.steps||[],presets:r.stuck_presets||[],unlocked:1,curStep:0,pick:''};
+ if(!TUTOR.steps.length){wrap.innerHTML='<div class="card">引导生成失败,请重试</div>';return;}
+ renderTutor();}
+function renderTutor(){const wrap=$('#tutorwrap');if(!wrap||!TUTOR)return;
+ const q=TUTOR.q,steps=TUTOR.steps,N=steps.length,un=TUTOR.unlocked;
+ const p=parseQ(q.content||'');
+ let h='<div class="qbox">';
+ if(q.material_text)h+='<div class="mat">【材料】'+esc(q.material_text)+'</div>';
+ if(q.category_l2||q.category_l1)h+=`<span class="tag">${esc(q.category_l2||q.category_l1)}</span>`;
+ if(q.knowledge_point)h+=`<span class="tag diff">${esc(q.knowledge_point)}</span>`;
+ h+=`<div class="stem">${esc(p.stem).replace(/\n/g,'<br>')}</div>`;
+ for(const im of (q.images||[]))h+=`<img src="${im}">`;
+ for(const im of (q.material_images||[]))h+=`<img src="${im}">`;
+ h+='</div>';
+ const pc=Math.round(un/N*100);
+ h+=`<div class="gprog"><span class="lab">第 ${un} / ${N} 步</span><div class="cap"><i style="width:${pc}%"></i></div></div>`;
+ for(let i=0;i<un;i++){const s=steps[i],dim=i<un-1?' dim':'';
+  h+=`<div class="gcard${dim}"><span class="gtag">${esc(s.tag)}</span><div class="gtitle">${esc(s.title)}</div>
+   <div class="gbody mdbody">${renderMD(s.body)}</div>
+   <span class="gstuck" onclick="openStuck(${i})">${ic('chat',13)} 这步没懂?换个说法</span></div>`;}
+ if(un<N)h+=`<div class="tnext"><button class="btn cta" onclick="tutorNext()">下一步 →</button></div>`;
+ else h+=ansboxHTML();
+ h+='<div id="stuckarea"></div>';
+ h+=`<div class="tsecondary"><div class="lab">想做点别的?</div><div class="row">
+   <button class="btn sm ghost" onclick="tutorAnother()">${ic('spark',14)} 换一道题</button>
+   <button class="btn sm ghost" onclick="tutorSimilar()">${ic('search',14)} 找相似</button>
+   <button class="btn sm ghost" onclick="go('practice')">${ic('chart',14)} 题型刷题</button></div></div>`;
+ wrap.innerHTML=h;typeset(wrap);}
+function tutorNext(){if(!TUTOR)return;TUTOR.unlocked=Math.min(TUTOR.unlocked+1,TUTOR.steps.length);
+ renderTutor();const cards=document.querySelectorAll('#tutorwrap .gcard');
+ if(cards.length)cards[cards.length-1].scrollIntoView({behavior:'smooth',block:'center'});}
+function ansboxHTML(){return `<div class="ansbox"><div class="h">${ic('check',16)} 走完引导了,核对一下你的判断</div>
+  <div class="circs">${['A','B','C','D'].map(k=>`<div class="circ" id="circ${k}" onclick="tutorPick('${k}')">${k}</div>`).join('')}</div>
+  <div class="ansact"><button class="btn cta" onclick="tutorSubmit()">提交并核对</button>
+   <button class="btn gray" onclick="openStuck(${TUTOR.unlocked-1})">还是没懂</button></div>
+  <div id="ansres" style="margin-top:12px"></div></div>`;}
+function tutorPick(k){if(!TUTOR)return;TUTOR.pick=k;
+ ['A','B','C','D'].forEach(x=>{const c=$('#circ'+x);if(c)c.classList.toggle('sel',x===k);});}
+async function tutorSubmit(){if(!TUTOR)return;if(!TUTOR.pick){toast('先选一个你倾向的答案');return;}
+ const fd=new FormData();fd.append('question_id',TUTOR.qid);fd.append('user_answer',TUTOR.pick);
+ let r;try{r=await j('/api/practice/submit',{method:'POST',body:fd});}catch(e){toast('提交失败:'+e);return;}
+ const res=$('#ansres');
+ if(r.has_answer===false||r.correct===null){res.innerHTML='已记录你的作答(本题官方答案暂未录入)。'
+   +(r.explanation?'<div class="mdbody" style="margin-top:6px">'+renderMD(r.explanation)+'</div>':'');typeset(res);return;}
+ const ans=(r.answer||'').toUpperCase();
+ ['A','B','C','D'].forEach(x=>{const c=$('#circ'+x);if(!c)return;
+  if(x===ans)c.classList.add('correct');else if(x===TUTOR.pick)c.classList.add('wrong');});
+ res.innerHTML=(r.correct?`<b style="color:var(--ok)">${ic('check',14)} 判断正确!</b>`:`<b style="color:var(--bad)">再想想,正确判断已标绿。</b>`)
+  +(r.explanation?'<div class="mdbody" style="margin-top:8px">'+renderMD(r.explanation)+'</div>':'')
+  +(r.correct?'':`<div style="margin-top:8px"><button class="btn sm ghost" onclick="tutorWhyWrong()">${ic('spark',14)} 为什么错?AI 讲解</button></div>`);
+ typeset(res);}
+async function tutorWhyWrong(){if(!TUTOR)return;const res=$('#ansres');
+ const fd=new FormData();fd.append('question_id',TUTOR.qid);fd.append('user_answer',TUTOR.pick);
+ let r;try{r=await j('/api/practice/explain',{method:'POST',body:fd});}catch(e){toast('讲解失败:'+e);return;}
+ if(r.detail){toast(r.detail);return;}
+ res.insertAdjacentHTML('beforeend','<div class="mdbody" style="margin-top:8px;border-top:1px dashed var(--line);padding-top:8px">'+renderMD(r.explanation||'')+'</div>');
+ typeset(res);}
+function openStuck(idx){if(!TUTOR)return;TUTOR.curStep=idx;const area=$('#stuckarea');if(!area)return;
+ const ps=TUTOR.presets||[];
+ let h='<div class="stuck"><div class="guardbar">'+ic('lock',13)+' 对话仍在引导模式:我帮你想通,但不会直接告诉你选哪个。</div>';
+ h+='<div class="pchips">'+ps.map((p,i)=>`<div class="pchip" onclick="tutorStuckPreset(${i})"><b>${esc(p.point_label)}</b>${esc(p.question)}</div>`).join('')+'</div>';
+ h+=`<div class="sfree"><input id="stuckin" placeholder="或用自己的话说哪里没懂…" onkeydown="if(event.key==='Enter'){event.preventDefault();tutorStuckFree()}"><button class="btn" onclick="tutorStuckFree()">问</button></div>`;
+ h+='<div class="sans" id="stuckans"></div></div>';
+ area.innerHTML=h;area.scrollIntoView({behavior:'smooth',block:'center'});}
+function tutorStuckPreset(i){const p=(TUTOR.presets||[])[i];if(!p)return;
+ tutorStuck(p.point_id,p.point_label,p.question,'preset');}
+function tutorStuckFree(){const inp=$('#stuckin');if(!inp)return;const t=inp.value.trim();if(!t)return;inp.value='';
+ const s=(TUTOR.steps||[])[TUTOR.curStep]||{};tutorStuck(s.point_id||'',s.point_label||'',t,'free_text',t);}
+async function tutorStuck(point_id,point_label,stuck_point,source,echo){
+ const ans=$('#stuckans');if(!ans)return;
+ if(echo)ans.insertAdjacentHTML('beforeend','<div class="tmsg tme" style="margin:6px 0">'+esc(echo)+'</div>');
+ ans.insertAdjacentHTML('beforeend','<div class="muted" id="stuckwait" style="font-size:13px;padding:6px">换个更好懂的说法…</div>');
+ ans.scrollIntoView({behavior:'smooth',block:'end'});
+ let r;try{r=await j('/api/questions/'+TUTOR.qid+'/stuck',{method:'POST',headers:{'content-type':'application/json'},
+   body:JSON.stringify({step_index:TUTOR.curStep||0,point_id,point_label,source,stuck_point})});}
+ catch(e){const w=$('#stuckwait');if(w)w.remove();toast('重讲失败:'+e);return;}
+ const w=$('#stuckwait');if(w)w.remove();
+ ans.insertAdjacentHTML('beforeend','<div class="mdbody">'+renderMD(r.body||'(没生成出来,换种说法再问问)')+'</div>');
+ typeset(ans);ans.scrollIntoView({behavior:'smooth',block:'end'});}
+async function tutorAnother(){if(!TUTOR)return;const q=TUTOR.q||{};
+ const qs='/api/practice/questions?limit=8'+(q.category_l1?'&l1='+encodeURIComponent(q.category_l1):'')+(q.category_l2?'&l2='+encodeURIComponent(q.category_l2):'');
+ let r;try{r=await j(qs);}catch(e){toast('换题失败:'+e);return;}
+ const items=(r.items||[]).filter(it=>String(it.id)!==String(TUTOR.qid));
+ if(!items.length){toast('暂时没有同类的新题');return;}
+ openTutor(items[Math.floor(Math.random()*items.length)].id);}
+async function tutorSimilar(){if(!TUTOR)return;const area=$('#stuckarea');if(!area)return;
+ area.innerHTML='<div class="card muted" style="padding:12px">检索相似题…</div>';
+ let r;try{r=await j('/api/practice/similar/'+TUTOR.qid);}catch(e){area.innerHTML='';toast('检索失败:'+e);return;}
+ if(r.detail||!r.count){area.innerHTML='<div class="card muted" style="padding:12px">暂无足够相似的题。</div>';return;}
+ let h='<div class="card"><b>考点相似题(点开换引导)</b>';
+ for(const q of r.items)h+=`<div style="margin-top:8px;cursor:pointer;color:var(--green)" onclick="openTutor(${q.id})">· ${esc(q.content).slice(0,46)}…</div>`;
+ h+='</div>';area.innerHTML=h;area.scrollIntoView({behavior:'smooth'});}
 async function findSim(id){const box=$('#r'+id);box.className='res info';box.innerHTML='检索中…';
  const r=await j('/api/practice/similar/'+id);
  if(r.detail){box.innerHTML=r.detail;return;}
@@ -817,6 +967,7 @@ async function mineDel(id){const fd=new FormData();fd.append('question_id',id);
 
 /* ---------- 对话状态(多会话历史;localStorage 持久,跨刷新/会话都在) ---------- */
 const V={};
+V.tutor=tutorView;   /* AI 助教引导页(函数声明在前,挂载在 const V 之后) */
 let CHAT=[];      // [{who:'me'|'ai'|'cards', html}] 当前会话渲染用
 let AI_HIST=[];   // [{role,content}] 喂给 LLM 的上下文
 let LAST_ITEMS=[];// 最近一次推荐题(右侧可下载 PDF)
@@ -1738,7 +1889,7 @@ function animCount(){document.querySelectorAll('[data-cu]').forEach(el=>{
 function toggleSheet(){$('#msheet').classList.toggle('show');$('#msheetmask').classList.toggle('show',$('#msheet').classList.contains('show'));}
 function hideSheet(){$('#msheet').classList.remove('show');$('#msheetmask').classList.remove('show');}
 function go(v){
- const hl=v==='paper'||v==='mock'||v==='mockreport'?'home':v;
+ const hl=v==='paper'||v==='mock'||v==='mockreport'||v==='tutor'?'home':v;
  [...document.querySelectorAll('#nav a')].forEach(a=>a.classList.toggle('on',a.dataset.v===hl));
  [...document.querySelectorAll('#tabbar a')].forEach(a=>a.classList.toggle('on',a.dataset.v===hl));
  window.scrollTo(0,0);render(v);}
