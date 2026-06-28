@@ -139,6 +139,18 @@ def _label_of(hit):
     return m.group(1) if m else (hit.get("id") or "")
 
 
+def _attach_image_desc(q):
+    """两段式第一段:有题面图就让视觉模型【客观描述】图形,写进 q['img_desc'];
+    第二段再由文字模型(DeepSeek)据描述生成稳定 JSON。无图/无视觉渠道则保持不变。"""
+    if q.get("images") and not q.get("img_desc"):
+        hint = f"这是一道行测「{q.get('question_type') or q.get('module') or ''}」题。"
+        try:
+            q["img_desc"] = ai.describe_images(q["images"], hint)
+        except Exception:
+            q["img_desc"] = ""
+    return q
+
+
 def retrieve_methods(module, question_type, content):
     """第一步:检索方法论。Chroma 按 module 硬过滤 + 向量 top-3。
     向量库不可用(没配 embed key 等)时退回 method_kb 关键词路由,保证主链路不空转。
@@ -177,8 +189,12 @@ def _methods_block(methods):
 
 def _question_block(question):
     qb = "【题目】\n" + (question.get("content") or "")
-    if question.get("images"):
-        qb += "\n(本题附有图片,请先看懂图中内容再拆解思路)"
+    desc = (question.get("img_desc") or "").strip()
+    if desc:
+        qb += ("\n\n【题面图片·客观描述(AI 读图所得,可能有误差;请据此理解图形再拆解思路)】\n"
+               + desc[:1500])
+    elif question.get("images"):
+        qb += "\n(本题含图片但未取得描述,请基于该题型方法论给出通用判型思路,不要臆测图中细节)"
     if question.get("material"):
         qb += "\n\n【材料】\n" + question["material"][:1500]
     ans = (question.get("answer") or "").strip()
@@ -195,6 +211,21 @@ def _question_block(question):
 
 
 # ---------- 数据层:引导缓存(按题共享,全员复用) ----------
+def _is_broken_steps(steps):
+    """旧版残留的坏缓存(生成异常占位 / 满屏生 JSON)→ 当作没缓存,让其重生成自愈。"""
+    if not isinstance(steps, list) or not steps:
+        return True
+    if len(steps) == 1:
+        s = steps[0]
+        if isinstance(s, dict):
+            if s.get("title") == "引导生成异常" or s.get("tag") == "提示":
+                return True
+            b = (s.get("body") or "").lstrip()
+            if b.startswith("{") or '"steps"' in b or '"body"' in b:
+                return True
+    return False
+
+
 def _cache_get(qid):
     db = SessionLocal()
     try:
@@ -204,6 +235,8 @@ def _cache_get(qid):
         try:
             steps = json.loads(row.steps_json)
         except Exception:
+            return None
+        if _is_broken_steps(steps):     # 旧坏缓存:返回 None → 触发重新生成自愈
             return None
         return {"steps": steps,
                 "method_ids": row.method_ids.split(",") if row.method_ids else [],
@@ -407,10 +440,11 @@ def generate_guidance(question_id, user_id=None, force=False):
     methods = _budget_methods(
         retrieve_methods(q["module"], q["question_type"], q["content"]))
     id2label = {m["id"]: m.get("label", "") for m in methods}
+    _attach_image_desc(q)        # 两段式:先把图转成文字描述(下一步交给擅长 JSON 的文字模型)
     system_text, blocks = assemble_steps(method_kb.guidance_system_prompt(), methods, q)
     try:
-        raw = ai.guidance_complete(system_text, blocks, images=q.get("images"),
-                                   scene="AI引导")
+        # 已把图转成文字描述,这里走文字模型(JSON 稳),不再把图直接丢给小视觉模型产 JSON
+        raw = ai.guidance_complete(system_text, blocks, images=None, scene="AI引导")
     except Exception:
         _logger.exception("guidance generate failed")
         raw = ""
@@ -446,6 +480,7 @@ def explain_stuck(question_id, user_id, step_index, point_id, stuck_point):
         (methods[0] if methods else None)
     point_label = focus.get("label", "") if focus else ""
     profile = _load_profile(user_id)
+    _attach_image_desc(q)        # 两段式:重讲也先读图成文字,再走文字模型
     blocks = []
     if focus:
         blocks.append(_methods_block([focus]))
@@ -456,7 +491,7 @@ def explain_stuck(question_id, user_id, step_index, point_id, stuck_point):
                   .replace("{stuck}", (stuck_point or "没看懂这一步").strip()[:500]))
     try:
         body = ai.guidance_complete(method_kb.guidance_system_prompt(), blocks,
-                                    images=q.get("images"), scene="AI引导重讲")[:2500]
+                                    images=None, scene="AI引导重讲")[:2500]
     except Exception:
         _logger.exception("explain_stuck failed")
         body = ""

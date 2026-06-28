@@ -97,6 +97,24 @@ def _invoke(messages, scene="其他"):
     raise RuntimeError(f"所有 AI 渠道均不可用,最后错误:{last_err}")
 
 
+def describe_images(image_paths, hint: str = "") -> str:
+    """让视觉模型【只客观描述】图中内容(绝不解题/给答案),供文字模型(DeepSeek)理解图形题。
+    两段式的第一段:把"图"转成"文字描述",第二段再由擅长 JSON 的文字模型生成分步引导,
+    避免小视觉模型直接产 JSON 时格式崩坏(题面变成一坨原始 JSON)。无视觉渠道/失败→空串。"""
+    if not image_paths:
+        return ""
+    sys = "你是看图助手。只【客观描述】图片里的内容,绝不解题、绝不给答案、绝不下结论。"
+    user = ((hint or "") +
+            "\n请逐个描述图中每一幅小图/每个选项的关键视觉特征:整体形状、由直线还是曲线构成、"
+            "是否对称、封闭区域(面)的个数、黑白块或元素个数、有无缺口、线条与交点数量等,"
+            "能数的给出具体数字。按「题干图1/图2…、选项A/B/C/D」分条列出。只描述,不推理、不选答案。")
+    try:
+        return _vision_chat(sys, user, image_paths=image_paths,
+                            scene="读图描述", max_tokens=1200).strip()
+    except Exception:
+        return ""
+
+
 def guidance_complete(system_text: str, user_blocks, images=None,
                       scene: str = "AI引导") -> str:
     """引导式思维拆解的 LLM 出口:守护层走 system 角色,方法论/题目等合并走 user。
